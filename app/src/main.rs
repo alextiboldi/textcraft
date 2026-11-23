@@ -2,6 +2,8 @@
 // line numbers, minimap, find & replace, go to line, command palette).
 use craft_dialogs::{Answer, Dialogs, FileDialog, Message, MessageButtons, MessageLevel, MessageResult};
 use craft_keymap::{egui::Dispatcher, Active, Bindable, Binding, CommandRef, Keymap, Scope, Scopes};
+use craft_settings::{Location, SaveStatus, SettingsStore};
+use serde::{Deserialize, Serialize};
 use eframe::egui::{
     self, text::LayoutJob, Color32, FontFamily, FontId, Key, Pos2, Rect, RichText, Sense, Stroke,
     TextFormat, Vec2,
@@ -254,6 +256,7 @@ struct Editor {
     dialogs: Dialogs<Then>,
     keymap: Keymap,
     dispatcher: Dispatcher,
+    settings: SettingsStore<Prefs>,
 }
 
 const SAMPLE: &str = r#"// Welcome to TextCraft.
@@ -288,15 +291,33 @@ fn main() {
 impl Editor {
     fn new(ctx: &egui::Context, shot: Option<PathBuf>, files: Vec<PathBuf>) -> Self {
         let wake_ctx = ctx.clone();
+        // Screenshots use defaults and never touch the user's config.toml, so they stay reproducible.
+        let (settings, report) = SettingsStore::<Prefs>::open(if shot.is_some() { Location::Memory } else { Location::Auto });
+        let view = settings.get().view.clone();
+        let keymap = keymap(craft_keymap::egui::platform(ctx)).with_overrides(settings.get().shortcuts.clone());
+        let mut problems = vec![];
+        if let Some(path) = &report.broken_moved_to {
+            problems.push(format!("config.toml was damaged and moved to {}; using default settings", path.display()));
+        }
+        for e in &report.section_errors {
+            problems.push(format!("settings [{}] reset to defaults: {}", e.section, e.message));
+        }
+        if let Some(why) = &report.read_only {
+            problems.push(format!("settings will not be saved: {why}"));
+        }
+        if !keymap.problems().is_empty() {
+            problems.push(format!("{} shortcut entries in config.toml could not be used", keymap.problems().len()));
+        }
         let mut ed = Editor {
             docs: vec![],
             active: 0,
             untitled_counter: 0,
             folder: None,
-            show_sidebar: true,
-            show_minimap: true,
-            font_size: 14.0,
-            word_wrap: false,
+            show_sidebar: view.show_sidebar,
+            show_minimap: view.show_minimap,
+            // a hand-edited size outside the menu's range falls back into it
+            font_size: if view.font_size.is_nan() { ViewPrefs::default().font_size } else { view.font_size.clamp(8.0, 40.0) },
+            word_wrap: view.word_wrap,
             find_open: false,
             replace_open: false,
             find_text: String::new(),
@@ -312,7 +333,7 @@ impl Editor {
             row_height: 17.0,
             scroll_to: None,
             pending_select: None,
-            status: String::new(),
+            status: problems.join("; "),
             shot,
             frame: 0,
             shot_done: Arc::new(AtomicBool::new(false)),
@@ -320,8 +341,9 @@ impl Editor {
             asking_quit: false,
             logo_tex: None,
             dialogs: Dialogs::new(Arc::new(move || wake_ctx.request_repaint())),
-            keymap: keymap(craft_keymap::egui::platform(ctx)),
+            keymap,
             dispatcher: Dispatcher::new(),
+            settings,
         };
         for f in files {
             if f.is_dir() {
@@ -632,6 +654,36 @@ fn keymap(platform: craft_keymap::Platform) -> Keymap {
     Keymap::new(catalog, Scopes::new(), platform)
 }
 
+/// What TextCraft keeps in `config.toml` between runs.
+#[derive(Serialize, Deserialize, Default, Clone, PartialEq)]
+#[serde(default)]
+struct Prefs {
+    view: ViewPrefs,
+    /// Shortcut changes by command id, e.g. `[[shortcuts]] command = "file.save" keys = ["F2"]`.
+    #[serde(with = "craft_keymap::keymap::overrides_list")]
+    shortcuts: craft_keymap::Overrides,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
+struct ViewPrefs {
+    show_sidebar: bool,
+    show_minimap: bool,
+    font_size: f32,
+    word_wrap: bool,
+}
+
+impl Default for ViewPrefs {
+    fn default() -> Self {
+        ViewPrefs { show_sidebar: true, show_minimap: true, font_size: 14.0, word_wrap: false }
+    }
+}
+
+impl craft_settings::Settings for Prefs {
+    const APP_ID: &'static str = "textcraft";
+    const SCHEMA_VERSION: u32 = 1;
+}
+
 // ---------- UI ----------
 impl eframe::App for Editor {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -711,6 +763,26 @@ impl eframe::App for Editor {
             self.palette(&ctx);
         }
         self.dialogs.show_pending(Some(frame));
+
+        // Save view changes half a second after the last one, however they were made.
+        let view = ViewPrefs { show_sidebar: self.show_sidebar, show_minimap: self.show_minimap, font_size: self.font_size, word_wrap: self.word_wrap };
+        self.settings.update(|p| p.view = view);
+        let tick = self.settings.tick(std::time::Instant::now());
+        if let SaveStatus::Failed(e) = &tick.status {
+            self.status = e.to_string();
+        }
+        for path in self.settings.take_moved_aside() {
+            self.status = format!("config.toml could not be read and was moved to {}", path.display());
+        }
+        if let Some(deadline) = tick.next_deadline {
+            ctx.request_repaint_after(deadline.saturating_duration_since(std::time::Instant::now()));
+        }
+    }
+
+    fn on_exit(&mut self) {
+        if let Err(e) = self.settings.flush() {
+            eprintln!("TextCraft: {e}");
+        }
     }
 }
 
@@ -1272,5 +1344,26 @@ mod tests {
                 assert!(Binding::parse(k).is_ok(), "{id}: {k}");
             }
         }
+    }
+
+    #[test]
+    fn hand_edited_config_rebinds_and_keeps_view_prefs() {
+        // What a user writes by hand: one view key and one rebound command. A temp folder, never
+        // the real settings folder.
+        let dir = std::env::temp_dir().join(format!("textcraft-settings-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.toml"), "schema_version = 1\n[view]\nword_wrap = true\n\n[[shortcuts]]\ncommand = \"file.save\"\nkeys = [\"F2\"]\n").unwrap();
+        let (store, report) = SettingsStore::<Prefs>::open_at(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!report.has_problems(), "{report:?}");
+
+        let prefs = store.get();
+        assert_ne!(prefs.view.word_wrap, ViewPrefs::default().word_wrap);
+        assert!(prefs.view.show_sidebar == ViewPrefs::default().show_sidebar, "missing keys keep their defaults");
+        let save = CommandRef::new("file.save");
+        let platform = craft_keymap::Platform::current();
+        let rebound = keymap(platform).with_overrides(prefs.shortcuts.clone());
+        assert!(rebound.problems().is_empty());
+        assert_ne!(rebound.bindings(&save), keymap(platform).bindings(&save));
     }
 }
