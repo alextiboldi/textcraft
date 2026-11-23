@@ -1,0 +1,16 @@
+[package]
+name = "textcraft"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.37"
+craft-dialogs = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5ea74abda83e541f34191e465163593" }
+craft-keymap = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5ea74abda83e541f34191e465163593", features = ["egui"] }
+craft-quit = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5ea74abda83e541f34191e465163593", features = ["egui"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+winit = "0.30"
+lucide-icons = "1.78"
+
+[profile.dev]
+opt-level = 1

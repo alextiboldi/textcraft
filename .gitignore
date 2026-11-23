@@ -1,0 +1,24 @@
+# Build output
+target/
+
+# Agent tool files (AGENTS.md rule 35)
+.claude/
+.cursor/
+
+# App-builder state and logs: not part of the source
+agent-session.jsonl
+build-activity.log
+usage.json
+feed.json
+craft.json
+inbox/
+pinned/
+checks/
+
+# Captures of the original program: clean-room material, never in the repository
+capture/
+reference/
+investigation.cany/
+
+# Scratch screenshots (a PR's screenshots go in its description)
+app/shots/
