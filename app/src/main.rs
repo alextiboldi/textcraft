@@ -782,7 +782,9 @@ fn keymap(platform: craft_keymap::Platform) -> Keymap {
             keys.iter().filter_map(|k| Binding::parse(k).ok()).fold(Bindable::new(id, tid!(id, label), Scope::app()), Bindable::with_default)
         })
         .collect();
-    Keymap::new(catalog, Scopes::new(), platform)
+    // Chords the system takes before TextCraft sees them (⌘Tab, Alt+F4…): no default or
+    // config.toml entry may use them; an entry that tries is reported through `problems`.
+    Keymap::new(catalog, Scopes::new(), platform).with_reserved(craft_keymap::reserved::system(platform))
 }
 
 /// What TextCraft keeps in `config.toml` between runs.
@@ -1582,7 +1584,9 @@ mod tests {
         for platform in [Platform::Mac, Platform::Windows, Platform::Linux] {
             let mut taken = reserved::system(platform);
             if platform.is_mac() {
-                // The app menu's Hide, Hide Others and Minimize, which reserved::system leaves out.
+                // TextCraft's own choice: its defaults leave the app menu's Hide, Hide Others and
+                // Minimize alone. A user may still bind them (craft-menu then moves Hide and Minimize
+                // to ⌃⌘H and ⌃⌘M), so they are not reserved in the app's keymap.
                 taken.extend(["Cmd+H", "Cmd+Alt+H", "Cmd+M"].iter().filter_map(|t| Chord::parse(t).ok()));
             }
             let km = keymap(platform).with_reserved(taken);
@@ -1594,6 +1598,21 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn config_cannot_bind_a_chord_the_system_takes() {
+        use craft_keymap::{Chord, Platform};
+        let dir = std::env::temp_dir().join(format!("textcraft-reserved-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.toml"), "schema_version = 1\n\n[[shortcuts]]\ncommand = \"file.save\"\nkeys = [\"Cmd+Tab\"]\n").unwrap();
+        let (store, _) = SettingsStore::<Prefs>::open_at(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        // ⌘Tab switches apps on macOS before TextCraft sees it.
+        let km = keymap(Platform::Mac).with_overrides(store.get().shortcuts.clone());
+        let cmd_tab = Chord::parse("Cmd+Tab").unwrap();
+        assert!(km.bindings(&CommandRef::new("file.save")).iter().all(|b| b.trigger.chord != cmd_tab));
+        assert!(!km.problems().is_empty(), "the unusable entry is reported");
     }
 
     #[test]
