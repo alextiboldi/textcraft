@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to a PR branch cancels its older run. Every push to main gets its own run, so each
+# state of main is checked to the end.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # AGENTS.md carries the shared Craft rules unedited, from a craft-contrib commit on main.
+  house-rules:
+    uses: storytold/craft-common-actions/.github/workflows/house-rules.yml@main
+    with:
+      rust: true
+
+  # Cargo.lock is up to date, and every git dependency comes from github.com/storytold.
+  git-sources:
+    uses: storytold/craft-common-actions/.github/workflows/git-sources.yml@main
+
+  gate:
+    # Tracks @main so suite-wide CI fixes reach the app without a PR here.
+    uses: storytold/craft-common-actions/.github/workflows/gate.yml@main
+    with:
+      # Linux and macOS on every run; Windows on main, manual runs and PRs labelled `full-ci`.
+      os: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-24.04","macos-latest","windows-latest"]' || '["ubuntu-24.04","macos-latest"]' }}
+      packages: >-
+        pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libxcursor-dev
+        libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev mesa-vulkan-drivers
+      # TextCraft doesn't use craft-fonts; build as a developer does, without it.
+      craft-fonts-ref: ""
+      tools: ""
+      lint-command: cargo clippy --workspace --all-targets --locked -- -D warnings
+      command: cargo test --workspace --locked
