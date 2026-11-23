@@ -24,5 +24,12 @@ Unicode normalization and character property data (embedded through ICU4X's icu_
   and icu_properties_data 2.4.0, used by egui's link handling) — Unicode License v3,
   Copyright (c) 2020-2024 Unicode, Inc. See licenses/icu4x/LICENSE.
 
+MPL-2.0 code
+
+option-ext 0.2.0 (used unmodified, through craft-settings and dirs) is licensed under the Mozilla
+Public License 2.0; see licenses/option-ext/LICENSE.txt. Its source code is available from
+https://crates.io/crates/option-ext/0.2.0 and
+https://github.com/soc/option-ext/tree/272f22fc9ea1ac6b08f01704af52c4ac338df4e2.
+
 The TextCraft logo (app/assets/logo.png and the window icon) is original work, drawn in code by
 app/src/main.rs.

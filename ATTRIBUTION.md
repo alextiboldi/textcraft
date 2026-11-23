@@ -23,3 +23,12 @@ None of these files are in this repository; the dependency compiles them into th
 
 egui's emoji fonts (Noto Emoji, the full emoji-icon-font) are not embedded: TextCraft builds
 without `epaint_default_fonts`' `monochrome_emoji_fonts` feature.
+
+## Code dependency notices
+
+Dependencies whose licence asks for more than the usual notice. Every other dependency is under a
+licence on the Craft allowlist and is used unmodified from crates.io or storytold.
+
+| Dependency | Authors | Source | Licence and notices |
+|---|---|---|---|
+| `option-ext` 0.2.0, through `craft-settings` → `dirs` → `dirs-sys`, used unmodified | Simon Ochsenreither | [crates.io](https://crates.io/crates/option-ext/0.2.0); source at [soc/option-ext@272f22f](https://github.com/soc/option-ext/tree/272f22fc9ea1ac6b08f01704af52c4ac338df4e2) | MPL-2.0; licence text in [`licenses/option-ext/LICENSE.txt`](licenses/option-ext/LICENSE.txt) (the crate has no notice file); source offer in [NOTICE](NOTICE) |
