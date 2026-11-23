@@ -682,7 +682,8 @@ enum Cmd {
 }
 
 /// (command, id, label, default shortcuts in craft-keymap's text form). `Cmd` is ⌘ on macOS and
-/// Ctrl elsewhere; `Ctrl` is the Mac Control key. The menus refer to rows by index.
+/// Ctrl elsewhere; `Ctrl` is the Mac Control key. The menus refer to rows by index. `NOT_MAC`
+/// replaces some rows' shortcuts on Windows and Linux.
 const CMDS: &[(Cmd, &str, &str, &[&str])] = &[
     (Cmd::NewFile, "file.new", "File: New File", &["Cmd+N"]),
     (Cmd::Open, "file.open", "File: Open…", &["Cmd+O"]),
@@ -694,7 +695,7 @@ const CMDS: &[(Cmd, &str, &str, &[&str])] = &[
     (Cmd::NextTab, "view.next_tab", "View: Next Tab", &["Ctrl+Tab"]),
     (Cmd::PrevTab, "view.prev_tab", "View: Previous Tab", &["Ctrl+Shift+Tab"]),
     (Cmd::Find, "find.find", "Find: Find…", &["Cmd+F"]),
-    (Cmd::Replace, "find.replace", "Find: Replace…", &["Cmd+Alt+F", "Cmd+H"]),
+    (Cmd::Replace, "find.replace", "Find: Replace…", &["Cmd+Alt+F"]),
     (Cmd::FindNext, "find.next", "Find: Find Next", &["Cmd+G"]),
     (Cmd::FindPrev, "find.prev", "Find: Find Previous", &["Cmd+Shift+G"]),
     (Cmd::GotoLine, "goto.line", "Go to Line…", &["Ctrl+G"]),
@@ -707,6 +708,15 @@ const CMDS: &[(Cmd, &str, &str, &[&str])] = &[
     (Cmd::Bigger, "view.font_bigger", "View: Increase Font Size", &["Cmd+="]),
     (Cmd::Smaller, "view.font_smaller", "View: Decrease Font Size", &["Cmd+-"]),
     (Cmd::Quit, "app.quit", "Quit", &["Cmd+Q"]),
+];
+
+/// Default shortcuts on Windows and Linux where they differ from `CMDS`, by command id. There
+/// Ctrl+G is Go to Line, so Find Next and Previous take F3 and Shift+F3, and Replace adds Ctrl+H
+/// (on macOS ⌘H hides the app).
+const NOT_MAC: &[(&str, &[&str])] = &[
+    ("find.replace", &["Cmd+Alt+F", "Cmd+H"]),
+    ("find.next", &["F3"]),
+    ("find.prev", &["Shift+F3"]),
 ];
 
 /// The menus, as rows of `CMDS`.
@@ -753,6 +763,7 @@ fn keymap(platform: craft_keymap::Platform) -> Keymap {
     let catalog = CMDS
         .iter()
         .map(|&(_, id, label, keys)| {
+            let keys = NOT_MAC.iter().find(|o| o.0 == id && !platform.is_mac()).map_or(keys, |o| o.1);
             keys.iter().filter_map(|k| Binding::parse(k).ok()).fold(Bindable::new(id, tid!(id, label), Scope::app()), Bindable::with_default)
         })
         .collect();
@@ -1512,9 +1523,29 @@ mod tests {
     #[test]
     fn every_default_shortcut_parses() {
         // keymap() drops texts it can't parse, so a typo would silently unbind a command.
-        for (_, id, _, keys) in CMDS {
-            for k in *keys {
+        for (id, keys) in CMDS.iter().map(|c| (c.1, c.3)).chain(NOT_MAC.iter().copied()) {
+            for k in keys {
                 assert!(Binding::parse(k).is_ok(), "{id}: {k}");
+            }
+        }
+    }
+
+    #[test]
+    fn default_shortcuts_are_free_on_every_platform() {
+        use craft_keymap::{reserved, Chord, Platform};
+        for platform in [Platform::Mac, Platform::Windows, Platform::Linux] {
+            let mut taken = reserved::system(platform);
+            if platform.is_mac() {
+                // The app menu's Hide, Hide Others and Minimize, which reserved::system leaves out.
+                taken.extend(["Cmd+H", "Cmd+Alt+H", "Cmd+M"].iter().filter_map(|t| Chord::parse(t).ok()));
+            }
+            let km = keymap(platform).with_reserved(taken);
+            assert!(km.conflicts().is_empty(), "{platform:?}: {:?}", km.conflicts());
+            assert!(km.problems().is_empty(), "{platform:?}: {:?}", km.problems());
+            for b in km.catalog() {
+                for binding in km.bindings(&b.command) {
+                    assert!(!km.is_reserved(&binding.trigger.chord), "{platform:?}: {} on {binding}", b.command);
+                }
             }
         }
     }
