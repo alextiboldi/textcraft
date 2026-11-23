@@ -3459,6 +3459,7 @@ name = "textcraft"
 version = "0.1.0"
 dependencies = [
  "craft-dialogs",
+ "craft-i18n",
  "craft-keymap",
  "craft-menu",
  "craft-quit",
