@@ -952,11 +952,12 @@ impl Editor {
     fn menu_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         egui::Panel::top("menu").frame(egui::Frame::NONE.fill(BG_TABBAR).inner_margin(egui::Margin::symmetric(8, 3))).show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                let tex = self.logo_tex.get_or_insert_with(|| {
-                    let px = 64;
-                    ctx.load_texture("logo", egui::ColorImage::from_rgba_unmultiplied([px, px], &logo_rgba(px)), Default::default())
-                });
-                ui.add(egui::Image::new((tex.id(), Vec2::splat(18.0))));
+                if self.logo_tex.is_none() {
+                    self.logo_tex = logo_rgba(64).map(|px| ctx.load_texture("logo", egui::ColorImage::from_rgba_unmultiplied([64, 64], &px), Default::default()));
+                }
+                if let Some(tex) = &self.logo_tex {
+                    ui.add(egui::Image::new((tex.id(), Vec2::splat(18.0))));
+                }
                 ui.label(RichText::new("TextCraft").strong().color(FG));
                 ui.add_space(8.0);
                 let mut chosen = None;
@@ -1403,52 +1404,17 @@ fn setup_style(ctx: &egui::Context) {
     });
 }
 
-/// The TextCraft logo, drawn from shapes: an amber text cursor beside three
-/// coloured lines of code on a dark rounded square. Returns RGBA pixels.
-fn logo_rgba(size: usize) -> Vec<u8> {
-    // signed distance to a rounded box (all in 0..1 units)
-    fn rbox(x: f32, y: f32, x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> f32 {
-        let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
-        let (hx, hy) = ((x1 - x0) / 2.0 - r, (y1 - y0) / 2.0 - r);
-        let (dx, dy) = ((x - cx).abs() - hx, (y - cy).abs() - hy);
-        (dx.max(0.0).hypot(dy.max(0.0))) + dx.max(dy).min(0.0) - r
-    }
-    let mut out = vec![0u8; size * size * 4];
-    let px = 1.0 / size as f32;
-    for j in 0..size {
-        for i in 0..size {
-            let (x, y) = ((i as f32 + 0.5) * px, (j as f32 + 0.5) * px);
-            let cover = |d: f32| (0.5 - d / px).clamp(0.0, 1.0);
-            // background: vertical gradient, rounded square
-            let t = y;
-            let bg = [0x2c as f32 * (1.0 - t) + 0x15 as f32 * t, 0x31 as f32 * (1.0 - t) + 0x17 as f32 * t, 0x3b as f32 * (1.0 - t) + 0x1c as f32 * t];
-            let a_bg = cover(rbox(x, y, 0.06, 0.06, 0.94, 0.94, 0.2));
-            let mut c = [bg[0], bg[1], bg[2]];
-            let mut paint = |d: f32, col: Color32| {
-                let a = cover(d);
-                for (ck, k) in c.iter_mut().zip(col.to_array()) { *ck = *ck * (1.0 - a) + k as f32 * a; }
-            };
-            // amber I-beam cursor
-            let stem = rbox(x, y, 0.27, 0.24, 0.35, 0.76, 0.02);
-            let top = rbox(x, y, 0.19, 0.22, 0.43, 0.29, 0.03);
-            let bot = rbox(x, y, 0.19, 0.71, 0.43, 0.78, 0.03);
-            paint(stem.min(top).min(bot), ACCENT);
-            // three lines of code
-            paint(rbox(x, y, 0.50, 0.30, 0.80, 0.38, 0.04), C_KEYWORD);
-            paint(rbox(x, y, 0.56, 0.46, 0.76, 0.54, 0.04), C_FUNC);
-            paint(rbox(x, y, 0.50, 0.62, 0.72, 0.70, 0.04), C_STRING);
-            let o = (j * size + i) * 4;
-            out[o..o + 4].copy_from_slice(&[c[0] as u8, c[1] as u8, c[2] as u8, (a_bg * 255.0) as u8]);
-        }
-    }
-    out
+/// The TextCraft logo (`assets/logo.webp`), as `size`×`size` RGBA pixels. `None` if it can't be
+/// decoded; the app then runs without a logo rather than failing.
+fn logo_rgba(size: u32) -> Option<Vec<u8>> {
+    let img = image::load_from_memory_with_format(include_bytes!("../assets/logo.webp"), image::ImageFormat::WebP).ok()?;
+    Some(image::imageops::resize(&img.to_rgba8(), size, size, image::imageops::FilterType::Lanczos3).into_raw())
 }
 
 /// What the command line asks for.
 #[derive(Default)]
 struct Args {
     shot: Option<PathBuf>,
-    export_logo: Option<PathBuf>,
     files: Vec<PathBuf>,
 }
 
@@ -1464,8 +1430,6 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
             out.files.push(a.into());
         } else if a == "--" {
             options = false;
-        } else if a == "--export-logo" {
-            out.export_logo = Some(args.next().unwrap_or_else(|| "logo.png".into()).into());
         } else if a == "--screenshot" {
             out.shot = args.next().map(PathBuf::from);
         } else if !a.starts_with("--") && !a.starts_with("-psn_") {
@@ -1479,15 +1443,12 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
 fn main() -> eframe::Result {
     // The system's language; the UI runs on this thread. English when no catalog fits.
     CURRENT.set(I18N.system_lang());
-    let Args { shot, export_logo, files } = parse_args(std::env::args().skip(1));
-    if let Some(path) = export_logo {
-        // writes the logo as a 1024px PNG, e.g. for a website or app bundle
-        image::save_buffer(&path, &logo_rgba(1024), 1024, 1024, image::ColorType::Rgba8).expect("could not write logo");
-        return Ok(());
-    }
+    let Args { shot, files } = parse_args(std::env::args().skip(1));
 
-    let mut viewport = egui::ViewportBuilder::default().with_title("TextCraft").with_inner_size([1200.0, 760.0]).with_min_inner_size([500.0, 300.0])
-        .with_icon(Arc::new(egui::IconData { rgba: logo_rgba(256), width: 256, height: 256 }));
+    let mut viewport = egui::ViewportBuilder::default().with_title("TextCraft").with_inner_size([1200.0, 760.0]).with_min_inner_size([500.0, 300.0]);
+    if let Some(rgba) = logo_rgba(512) {
+        viewport = viewport.with_icon(Arc::new(egui::IconData { rgba, width: 512, height: 512 }));
+    }
     let mut options = eframe::NativeOptions::default();
     if shot.is_some() {
         viewport = viewport.with_active(false);
@@ -1529,11 +1490,17 @@ mod tests {
     }
 
     #[test]
+    fn the_logo_decodes() {
+        // Guards the embedded file and the `image` crate's `webp` feature together.
+        assert!(logo_rgba(64).is_some_and(|px| px.len() == 64 * 64 * 4));
+    }
+
+    #[test]
     fn launch_flags_are_not_opened_as_files() {
         let parse = |args: &[&str]| parse_args(args.iter().map(|a| a.to_string()));
         let args = parse(&["-AppleLanguages", "(fr)", "-psn_0_12345", "notes.txt", "--", "-dash.txt"]);
         assert_eq!(args.files, [PathBuf::from("notes.txt"), PathBuf::from("-dash.txt")]);
-        assert!(args.shot.is_none() && args.export_logo.is_none());
+        assert!(args.shot.is_none());
         assert!(parse(&["--screenshot", "shot.png", "-NSDocumentRevisionsDebugMode", "YES"]).shot.is_some());
     }
 

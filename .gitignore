@@ -22,3 +22,6 @@ investigation.cany/
 
 # Scratch screenshots (a PR's screenshots go in its description)
 app/shots/
+
+# macOS Finder metadata
+.DS_Store
