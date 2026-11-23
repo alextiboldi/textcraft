@@ -38,5 +38,7 @@ jobs:
       # TextCraft doesn't use craft-fonts; build as a developer does, without it.
       craft-fonts-ref: ""
       tools: ""
-      lint-command: cargo clippy --workspace --all-targets --locked -- -D warnings
+      lint-command: |
+        cargo fmt --all --check
+        cargo clippy --workspace --all-targets --locked -- -D warnings
       command: cargo test --workspace --locked
