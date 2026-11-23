@@ -7,6 +7,7 @@ edition = "2021"
 eframe = "0.37"
 craft-dialogs = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5ea74abda83e541f34191e465163593" }
 craft-keymap = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5ea74abda83e541f34191e465163593", features = ["egui"] }
+craft-i18n = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5ea74abda83e541f34191e465163593" }
 craft-quit = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5ea74abda83e541f34191e465163593", features = ["egui"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 winit = "0.30"

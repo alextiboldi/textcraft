@@ -32,6 +32,33 @@ fn icon(i: Icon) -> String {
     i.unicode().to_string()
 }
 
+// ---------- translations (craft-i18n; English source text is the key) ----------
+include!(concat!(env!("OUT_DIR"), "/craft_i18n.rs")); // CRAFT_I18N, built by build.rs
+
+static I18N: std::sync::LazyLock<craft_i18n::I18n> = std::sync::LazyLock::new(|| {
+    // ponytail: offers every embedded left-to-right locale; TextCraft has no right-to-left layout yet.
+    let offered: Vec<&str> = CRAFT_I18N.iter().map(|l| l.0).filter(|c| craft_i18n::direction(c) != craft_i18n::Direction::Rtl).collect();
+    let (i18n, problems) = craft_i18n::I18n::new(CRAFT_I18N, &offered);
+    problems.iter().for_each(|p| eprintln!("translation catalog: {p}"));
+    i18n
+});
+
+thread_local! { static CURRENT: std::cell::Cell<craft_i18n::Lang> = const { std::cell::Cell::new(craft_i18n::Lang::EN) }; }
+
+/// English `$s` in the interface language.
+macro_rules! tl { ($s:expr) => { I18N.t(CURRENT.get(), $s) }; }
+/// A command's label by its id.
+macro_rules! tid { ($id:expr, $label:expr) => { I18N.tid(CURRENT.get(), $id, $label) }; }
+/// A count's wording, `{n}` filled: `trn!(n, "{n} match", "{n} matches")`.
+macro_rules! trn { ($n:expr, $one:expr, $other:expr) => { I18N.trn(CURRENT.get(), $n as u64, $one, $other) }; }
+/// `{name}` placeholders of a translated message filled in.
+macro_rules! tf { ($s:expr, $($k:ident = $v:expr),+ $(,)?) => { craft_i18n::fmt(tl!($s), &[$((stringify!($k), &$v.to_string())),+]) }; }
+
+/// A number as the region writes it, isolated left to right.
+fn num(n: usize) -> String {
+    craft_i18n::ltr(&I18N.format().integer(n as u64))
+}
+
 // ---------- syntax colouring ----------
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Tok {
@@ -186,7 +213,7 @@ impl Doc {
     fn title(&self) -> String {
         match &self.path {
             Some(p) => p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-            None => if self.untitled_no == 0 { "untitled".into() } else { format!("untitled {}", self.untitled_no + 1) },
+            None => if self.untitled_no == 0 { tl!("untitled").into() } else { craft_i18n::fmt_plain(tl!("untitled {n}"), &[("n", &(self.untitled_no + 1).to_string())]) }, // also the Save As file name
         }
     }
     fn dirty(&self) -> bool {
@@ -366,7 +393,7 @@ impl Editor {
                 self.docs.push(Doc { path: Some(p), saved: text.clone(), text, untitled_no: 0 });
                 self.active = self.docs.len() - 1;
             }
-            Err(e) => self.status = format!("Could not open {}: {e}", p.display()),
+            Err(e) => self.status = tf!("Could not open {path}: {error}", path = craft_i18n::ltr(&p.display().to_string()), error = e),
         }
     }
 
@@ -385,12 +412,12 @@ impl Editor {
                 let d = &mut self.docs[idx];
                 d.saved = d.text.clone();
                 d.path = Some(path);
-                self.status = "Saved".into();
+                self.status = tl!("Saved").into();
                 if then_close {
                     self.remove_tab(idx);
                 }
             }
-            Err(e) => self.status = format!("Could not save: {e}"),
+            Err(e) => self.status = tf!("Could not save: {error}", error = e),
         }
     }
 
@@ -398,8 +425,8 @@ impl Editor {
         if self.docs[idx].dirty() {
             let message = Message {
                 level: MessageLevel::Warning,
-                title: "Unsaved changes".into(),
-                description: format!("Save changes to {} before closing?", self.docs[idx].title()),
+                title: tl!("Unsaved changes").into(),
+                description: tf!("Save changes to {name} before closing?", name = self.docs[idx].title()),
                 buttons: MessageButtons::YesNoCancel,
             };
             self.dialogs.ask_message(message, Then::ConfirmClose(idx));
@@ -428,7 +455,7 @@ impl Editor {
             // bounds checks keep that from panicking. Give docs stable ids if it matters.
             let live = |i: usize| i < self.docs.len();
             match (then, answer) {
-                (_, Answer::Unavailable(why)) => self.status = format!("Could not show the dialog: {why}"),
+                (_, Answer::Unavailable(why)) => self.status = tf!("Could not show the dialog: {reason}", reason = why),
                 (Then::Open, Answer::Paths(paths)) => paths.into_iter().for_each(|p| self.open_path(p)),
                 (Then::OpenFolder, Answer::Paths(paths)) => {
                     if let Some(d) = paths.into_iter().next() {
@@ -471,7 +498,7 @@ impl Editor {
         let text = &self.docs[self.active].text;
         let hits = find_all(text, &self.find_text, self.find_case);
         if hits.is_empty() {
-            self.status = "No matches".into();
+            self.status = tl!("No matches").into();
             return;
         }
         // current cursor byte offset
@@ -488,7 +515,7 @@ impl Editor {
         let line = text[..pick.0].matches('\n').count() + 1;
         self.pending_select = Some((s, e));
         self.scroll_to = Some(((line as f32) - 6.0).max(0.0) * self.row_height);
-        self.status = format!("{} matches", hits.len());
+        self.status = trn!(hits.len(), "{n} match", "{n} matches");
     }
 
     fn replace_one(&mut self) {
@@ -514,7 +541,7 @@ impl Editor {
         for &(s, e) in hits.iter().rev() {
             text.replace_range(s..e, &rep);
         }
-        self.status = format!("Replaced {} occurrences", hits.len());
+        self.status = trn!(hits.len(), "Replaced {n} occurrence", "Replaced {n} occurrences");
     }
 
     fn index_folder(&mut self) {
@@ -626,7 +653,7 @@ fn keymap(platform: craft_keymap::Platform) -> Keymap {
     let catalog = CMDS
         .iter()
         .map(|&(_, id, label, keys)| {
-            keys.iter().filter_map(|k| Binding::parse(k).ok()).fold(Bindable::new(id, label, Scope::app()), Bindable::with_default)
+            keys.iter().filter_map(|k| Binding::parse(k).ok()).fold(Bindable::new(id, tid!(id, label), Scope::app()), Bindable::with_default)
         })
         .collect();
     Keymap::new(catalog, Scopes::new(), platform)
@@ -642,8 +669,8 @@ impl eframe::App for Editor {
                 self.asking_quit = true;
                 let message = Message {
                     level: MessageLevel::Warning,
-                    title: "Unsaved changes".into(),
-                    description: "Some files have unsaved changes. Quit anyway?".into(),
+                    title: tl!("Unsaved changes").into(),
+                    description: tl!("Some files have unsaved changes. Quit anyway?").into(),
                     buttons: MessageButtons::YesNo,
                 };
                 self.dialogs.ask_message(message, Then::ConfirmQuit);
@@ -727,15 +754,16 @@ impl Editor {
                 ui.add_space(8.0);
                 let mut chosen = None;
                 let groups: [(&str, &[usize]); 4] = [
-                    ("File", &[0, 1, 2, 3, 4, 5, 6, 21]),
-                    ("Edit", &[9, 10, 11, 12]),
-                    ("Goto", &[15, 14, 13, 7, 8]),
-                    ("View", &[16, 17, 18, 19, 20]),
+                    (tl!("File"), &[0, 1, 2, 3, 4, 5, 6, 21]),
+                    (tl!("Edit"), &[9, 10, 11, 12]),
+                    (tl!("Goto"), &[15, 14, 13, 7, 8]),
+                    (tl!("View"), &[16, 17, 18, 19, 20]),
                 ];
                 for (name, items) in groups {
                     ui.menu_button(name, |ui| {
                         for &i in items {
                             let (cmd, id, label, _) = CMDS[i];
+                            let label = tid!(id, label);
                             let short = label.split_once(": ").map_or(label, |(_, l)| l);
                             if ui.add(egui::Button::new(short).shortcut_text(self.shortcut_text(id))).clicked() {
                                 chosen = Some(cmd);
@@ -751,20 +779,25 @@ impl Editor {
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
-        let lang = self.docs[self.active].lang().name;
+        let lang = match self.docs[self.active].lang().name {
+            // Generic names; the others are proper names and stay as written.
+            "Plain Text" => tl!("Plain Text"),
+            "Shell Script" => tl!("Shell Script"),
+            name => name,
+        };
         egui::Panel::bottom("status").frame(egui::Frame::NONE.fill(BG_TABBAR).inner_margin(egui::Margin::symmetric(10, 4))).show(ui, |ui| {
             ui.horizontal(|ui| {
                 let small = |s: String| RichText::new(s).size(12.0).color(FG_DIM);
-                if ui.add(egui::Button::new(small(icon(Icon::PanelLeft))).frame(false)).on_hover_text("Toggle side bar").clicked() {
+                if ui.add(egui::Button::new(small(icon(Icon::PanelLeft))).frame(false)).on_hover_text(tl!("Toggle side bar")).clicked() {
                     self.show_sidebar = !self.show_sidebar;
                 }
-                ui.label(small(format!("Line {}, Column {}", self.cursor_line, self.cursor_col)));
+                ui.label(small(tf!("Line {line}, Column {column}", line = num(self.cursor_line), column = num(self.cursor_col))));
                 if !self.status.is_empty() {
                     ui.label(small(format!("·  {}", self.status)));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(small(lang.to_string()));
-                    ui.label(small("Spaces: 4".into()));
+                    ui.label(small(tf!("Spaces: {n}", n = num(4))));
                     ui.label(small("UTF-8".into()));
                 });
             });
@@ -775,8 +808,8 @@ impl Editor {
         egui::Panel::bottom("find").frame(egui::Frame::NONE.fill(BG_SIDE).inner_margin(egui::Margin::symmetric(10, 6))).show(ui, |ui| {
             let n = find_all(&self.docs[self.active].text, &self.find_text, self.find_case).len();
             ui.horizontal(|ui| {
-                ui.toggle_value(&mut self.find_case, RichText::new(icon(Icon::CaseSensitive))).on_hover_text("Match case");
-                let r = ui.add(egui::TextEdit::singleline(&mut self.find_text).hint_text("Find").desired_width(320.0));
+                ui.toggle_value(&mut self.find_case, RichText::new(icon(Icon::CaseSensitive))).on_hover_text(tl!("Match case"));
+                let r = ui.add(egui::TextEdit::singleline(&mut self.find_text).hint_text(tl!("Find")).desired_width(320.0));
                 if self.find_focus {
                     r.request_focus();
                     self.find_focus = false;
@@ -786,20 +819,20 @@ impl Editor {
                     self.find_step(!back);
                     r.request_focus();
                 }
-                if ui.button(format!("{} Find", icon(Icon::ArrowDown))).clicked() { self.find_step(true); }
-                if ui.button(format!("{} Prev", icon(Icon::ArrowUp))).clicked() { self.find_step(false); }
-                ui.label(RichText::new(if self.find_text.is_empty() { String::new() } else { format!("{n} matches") }).color(FG_DIM));
+                if ui.button(format!("{} {}", icon(Icon::ArrowDown), tl!("Find"))).clicked() { self.find_step(true); }
+                if ui.button(format!("{} {}", icon(Icon::ArrowUp), tl!("Prev"))).clicked() { self.find_step(false); }
+                ui.label(RichText::new(if self.find_text.is_empty() { String::new() } else { trn!(n, "{n} match", "{n} matches") }).color(FG_DIM));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(icon(Icon::X)).on_hover_text("Close").clicked() { self.find_open = false; }
-                    ui.toggle_value(&mut self.replace_open, icon(Icon::Replace)).on_hover_text("Show replace");
+                    if ui.button(icon(Icon::X)).on_hover_text(tl!("Close")).clicked() { self.find_open = false; }
+                    ui.toggle_value(&mut self.replace_open, icon(Icon::Replace)).on_hover_text(tl!("Show replace"));
                 });
             });
             if self.replace_open {
                 ui.horizontal(|ui| {
                     ui.add_space(30.0);
-                    ui.add(egui::TextEdit::singleline(&mut self.replace_text).hint_text("Replace").desired_width(320.0));
-                    if ui.button(format!("{} Replace", icon(Icon::Replace))).clicked() { self.replace_one(); }
-                    if ui.button(format!("{} Replace All", icon(Icon::ReplaceAll))).clicked() { self.replace_all(); }
+                    ui.add(egui::TextEdit::singleline(&mut self.replace_text).hint_text(tl!("Replace")).desired_width(320.0));
+                    if ui.button(format!("{} {}", icon(Icon::Replace), tl!("Replace"))).clicked() { self.replace_one(); }
+                    if ui.button(format!("{} {}", icon(Icon::ReplaceAll), tl!("Replace All"))).clicked() { self.replace_all(); }
                 });
             }
         });
@@ -811,7 +844,7 @@ impl Editor {
         let mut close = None;
         egui::Panel::left("side").default_size(220.0).frame(egui::Frame::NONE.fill(BG_SIDE).inner_margin(egui::Margin::symmetric(8, 8))).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.label(RichText::new("OPEN FILES").size(11.0).color(FG_DIM).strong());
+                ui.label(RichText::new(tl!("OPEN FILES")).size(11.0).color(FG_DIM).strong());
                 for (i, d) in self.docs.iter().enumerate() {
                     ui.horizontal(|ui| {
                         let mark = if d.dirty() { icon(Icon::Circle) } else { icon(Icon::X) };
@@ -826,7 +859,7 @@ impl Editor {
                 }
                 if let Some(folder) = &self.folder {
                     ui.add_space(10.0);
-                    ui.label(RichText::new("FOLDERS").size(11.0).color(FG_DIM).strong());
+                    ui.label(RichText::new(tl!("FOLDERS")).size(11.0).color(FG_DIM).strong());
                     let name = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| folder.display().to_string());
                     let active_path = self.docs[self.active].path.clone();
                     dir_tree(ui, folder, &name, true, &active_path, &mut open);
@@ -855,7 +888,7 @@ impl Editor {
                                 ui.label(RichText::new(icon(Icon::FileText)).size(12.0).color(if active { ACCENT } else { FG_DIM }));
                                 ui.label(RichText::new(d.title()).color(if active { FG } else { FG_DIM }));
                                 let mark = if d.dirty() { icon(Icon::Circle) } else { icon(Icon::X) };
-                                if ui.add(egui::Button::new(RichText::new(mark).size(11.0).color(FG_DIM)).frame(false)).on_hover_text("Close").clicked() {
+                                if ui.add(egui::Button::new(RichText::new(mark).size(11.0).color(FG_DIM)).frame(false)).on_hover_text(tl!("Close")).clicked() {
                                     close = Some(i);
                                 }
                             });
@@ -868,7 +901,7 @@ impl Editor {
                             ui.painter().hline(rr.x_range(), rr.top(), Stroke::new(2.0, ACCENT));
                         }
                     }
-                    if ui.add(egui::Button::new(RichText::new(icon(Icon::Plus)).color(FG_DIM)).frame(false)).on_hover_text("New file").clicked() {
+                    if ui.add(egui::Button::new(RichText::new(icon(Icon::Plus)).color(FG_DIM)).frame(false)).on_hover_text(tl!("New file")).clicked() {
                         self.new_file();
                     }
                 });
@@ -1046,16 +1079,16 @@ impl Editor {
         let q = self.palette_query.clone();
         let mut items: Vec<(String, String, Act)> = vec![];
         if let Some(rest) = q.strip_prefix('>') {
-            let mut scored: Vec<_> = CMDS.iter().filter_map(|&(c, id, l, _)| fuzzy(l, rest.trim()).map(|s| (s, c, id, l))).collect();
+            let mut scored: Vec<_> = CMDS.iter().filter_map(|&(c, id, l, _)| { let l = tid!(id, l); fuzzy(l, rest.trim()).map(|s| (s, c, id, l)) }).collect();
             scored.sort_by_key(|x| x.0);
             items = scored.into_iter().map(|(_, c, id, l)| (l.to_string(), self.shortcut_text(id), Act::Cmd(c))).collect();
         } else if let Some(rest) = q.strip_prefix(':') {
             let n: usize = rest.trim().parse().unwrap_or(0);
             let total = self.docs[self.active].text.matches('\n').count() + 1;
             if n > 0 {
-                items.push((format!("Go to line {}", n.min(total)), String::new(), Act::Line(n.min(total))));
+                items.push((tf!("Go to line {n}", n = num(n.min(total))), String::new(), Act::Line(n.min(total))));
             } else {
-                items.push((format!("Type a line number between 1 and {total}"), String::new(), Act::Line(0)));
+                items.push((tf!("Type a line number between {first} and {last}", first = num(1), last = num(total)), String::new(), Act::Line(0)));
             }
         } else {
             let root = self.folder.clone().unwrap_or_default();
@@ -1069,7 +1102,7 @@ impl Editor {
                 (name, rel, Act::File(p))
             }).collect();
             if self.folder.is_none() {
-                items.push(("Open a folder to search its files".into(), String::new(), Act::Cmd(Cmd::OpenFolder)));
+                items.push((tl!("Open a folder to search its files").into(), String::new(), Act::Cmd(Cmd::OpenFolder)));
             }
         }
         self.palette_sel = self.palette_sel.min(items.len().saturating_sub(1));
@@ -1081,7 +1114,7 @@ impl Editor {
         egui::Area::new(egui::Id::unique("palette")).order(egui::Order::Foreground).fixed_pos(Pos2::new(screen.center().x - 260.0, screen.top() + 60.0)).show(ctx, |ui| {
             egui::Frame::popup(ui.style()).fill(BG_SIDE).inner_margin(8).show(ui, |ui| {
                 ui.set_width(520.0);
-                let r = ui.add(egui::TextEdit::singleline(&mut self.palette_query).hint_text("Search files, > for commands, : for line").desired_width(f32::INFINITY));
+                let r = ui.add(egui::TextEdit::singleline(&mut self.palette_query).hint_text(tl!("Search files, > for commands, : for line")).desired_width(f32::INFINITY));
                 r.request_focus();
                 if r.changed() { self.palette_sel = 0; }
                 if ui.input(|i| i.key_pressed(Key::Enter)) && !items.is_empty() { run = Some(self.palette_sel); }
@@ -1206,6 +1239,8 @@ fn logo_rgba(size: usize) -> Vec<u8> {
 }
 
 fn main() -> eframe::Result {
+    // The system's language; the UI runs on this thread. English when no catalog fits.
+    CURRENT.set(I18N.system_lang());
     let mut args = std::env::args().skip(1);
     let mut shot = None;
     let mut files = vec![];
