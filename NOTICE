@@ -20,8 +20,9 @@ egui-icons font (embedded through egui's epaint_default_fonts 0.37.0, from story
 Lucide icon font (embedded through the lucide-icons 1.78.0 crate, Lucide release 1.78.0) — ISC,
   Copyright (c) 2026 Lucide Icons and Contributors; icons derived from Feather are also MIT,
   Copyright (c) 2013-present Cole Bemis. See licenses/lucide/LICENSE.
-Unicode normalization and character property data (embedded through ICU4X's icu_normalizer_data
-  and icu_properties_data 2.4.0, used by egui's link handling) — Unicode License v3,
+Unicode data (embedded through ICU4X's icu_normalizer_data, icu_properties_data and
+  icu_locale_fallback_data 2.3.0, used by egui's link handling and craft-i18n, and craft-i18n's
+  number and plural data generated from Unicode CLDR 48.2.1) — Unicode License v3,
   Copyright (c) 2020-2024 Unicode, Inc. See licenses/icu4x/LICENSE.
 
 MPL-2.0 code
