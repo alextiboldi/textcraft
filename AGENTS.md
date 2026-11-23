@@ -63,35 +63,20 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119
 ## This repository
 <!-- craft-agents:end -->
 
-PhotoCraft is a native image editor in Rust (egui/eframe on wgpu; the web build is the same code compiled to WebAssembly). Product name: PhotoCraft; crates, binaries and ids stay lowercase (`photocraft-*`). Shared components are pinned from storytold/craft-libs by git revision.
+TextCraft is a native code editor in Rust: egui/eframe 0.37, built on storytold's egui and winit forks. macOS is the main platform; Windows and Linux should build but have not been tried. Product name: TextCraft; the crate, binary and app id are `textcraft`.
 
-Layout, by layer (`cargo xtask layers` checks it; register new crates in `xtask/src/layers.rs`):
-
-- `crates/geom color raster`: L0, with the standalone L0 crates `ipp raw tablet` (no workspace dependencies). `doc`: L1. `ops paint algo text vector`: L2. `compose gpu format`: L3. `io plugins`: L4. `engine`: L5, the session and command registry. `ui-egui automation`: L6, the egui shell and MCP server. `testkit` and `oil-round-proof` are test helpers.
-- `apps/photocraft` (desktop), `apps/photocraft-cli` (headless CLI, MCP), `apps/photocraft-web`, `xtask/`.
-- Every action is an engine command; ids match `crates/ui-egui/src/menu_catalog.rs`, which makes the menu item live. Panels dispatch command ids.
-
-Checks for the crates you changed:
-
-```sh
-cargo test -p <crate>
-cargo clippy -p <crate> --all-targets -- -D warnings
-cargo xtask layers
-cargo xtask panel-commands   # ui-egui
-cargo xtask wasm             # L0-L6
-cargo xtask parity           # new commands; commit docs/parity-checklist.md
-cargo test -p photocraft-engine --test panic_hunt -- --ignored   # command sweep
-cargo xtask test-corpus      # psd, io, codecs, compose, gpu, text, format
-```
-
-Conventions and paths:
-
-- `unsafe` is allowed only in `crates/tablet/src/macos.rs` and `windows.rs`; the workspace sets `unsafe_code = "forbid"`. The example plug-in in `examples/plugins/` is outside the workspace and uses `unsafe` for the WebAssembly host calls. Every new crate sets `[lints] workspace = true`.
-- Attribution file: `ATTRIBUTION.md`. Fonts come from storytold/craft-fonts through `CRAFT_FONTS_DIR` (`docs/development.md` > Fonts).
-- Test corpora: storytold/photocraft-corpus, fetched into `corpus/` by `cargo xtask corpus --all` at the pins in `xtask/src/corpus_pins.rs`. `cargo xtask test-corpus` runs each directory's fixed sample; `PHOTOCRAFT_FULL_SWEEP=1` runs every file (CI: samples on pull requests and main, every file nightly).
-- Feature names are recorded in `docs/feature-names.md`.
-- Contributor credits: `docs/contributors.md`.
-- Dev log: `log/devlog.md` (local, gitignored). `plan/` is an optional local notebook.
-- Screenshots of a PR's change go in the PR description. `docs/images/` holds only images a doc shows.
-
-Docs: `docs/contributing.md` (repository guide, document list, picking work, adding a command), `docs/development.md`, `docs/architecture.md`.
+- Layout: one crate, `app/`. `app/src/main.rs` is the whole app (editor, commands, menus, settings, tests); `app/build.rs` embeds the craft-i18n catalogs; `app/assets/logo.webp` is the logo, embedded in the binary. There is no workspace, `xtask`, CLI, MCP entry point or web build yet.
+- Commands: every action is a row in `CMDS` in `main.rs` (enum variant, id, English label, default shortcuts), run by `Editor::run_command`. `NOT_MAC` replaces some defaults off macOS; `MENUS` groups the rows into menus. Shortcuts come from a craft-keymap `Keymap` built from `CMDS` (`keymap()`), which reserves the system's chords; the native macOS menu is built from the same rows by craft-menu (`mac_menus`). A new command is a `Cmd` variant, a `CMDS` row, an arm in `run_command` and, for a menu item, its row index in `MENUS`; don't handle its keys or menu clicks anywhere else. `MENUS` refers to rows by index, so add rows at the end of `CMDS`.
+- Shared code: craft-libs crates (dialogs, keymap, menu, quit, settings, ui, i18n) at one `rev` in `app/Cargo.toml`. The `[patch.crates-io]` block there pins egui and winit to the revisions craft-libs' own workspace uses; a craft-libs `rev` move updates both together, in its own PR.
+- Colours: the constants at the top of `main.rs` (`BG`, `FG`, `ACCENT`, `C_*`) are the theme; add new colours there as constants. Two older literals remain outside it: the minimap's view box and the text selection colour in `setup_style`.
+- Text: user-facing strings go through the `tl!`, `tf!`, `trn!` and `tid!` macros in `main.rs`, English source text as the key. Translations live in storytold/craft-i18n under the app id `textcraft` (`locales/<code>/textcraft.tsv`) and are embedded only when `CRAFT_I18N_DIR` is set; unset, the app is English.
+- Settings: craft-settings stores `config.toml` (macOS: `~/Library/Application Support/textcraft/`): view preferences and `[[shortcuts]]` overrides. `TEXTCRAFT_CONFIG_DIR` overrides the folder; set but empty, nothing is read or written. Tests use a temporary folder, never the real one.
+- Checks, run from `app/`: `cargo test`, `cargo clippy --all-targets -- -D warnings`, then `cargo build` and `./target/debug/textcraft --screenshot <path>.png` and look at the image. `--screenshot` uses default settings in memory and quits after capturing. The code is not rustfmt-formatted yet: don't reformat code you aren't changing, so diffs stay reviewable; a whole-file format is its own PR. There is no CI yet.
+- Tests are in `mod tests` at the end of `main.rs`.
+- Run: `cargo run` from `app/`. Arguments are files or a folder to open; other `-` options are ignored (macOS passes some), and `--` makes every later argument a file.
+- `unsafe`: none; TextCraft's own code has no `unsafe` block.
+- Attribution: `ATTRIBUTION.md` (assets and embedded third-party material, with sources and checksums), `NOTICE` (notices that ship with the app) and the licence texts in `licenses/`. A change that embeds new third-party material, or adds a dependency whose licence asks for more than the usual notice (MPL-2.0, IJG), updates all three in the same change. TextCraft is MIT OR Apache-2.0.
+- Feature names: the maintainer reviewed "Goto", "Command Palette", "Minimap" and the side bar headings as common editor wording and kept them. New user-visible names still get the naming.md check.
+- Clean room: no builder, capture or screenshot tool is pointed at another product from this repository. `.gitignore` keeps builder state and captures out.
+- Progress log and contributor credits: none yet.
+- Screenshots of a PR's change go in the PR description, not the repository.
