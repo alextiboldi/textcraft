@@ -213,7 +213,7 @@ impl Doc {
     fn title(&self) -> String {
         match &self.path {
             Some(p) => p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-            None => if self.untitled_no == 0 { tl!("untitled").into() } else { craft_i18n::fmt_plain(tl!("untitled {n}"), &[("n", &(self.untitled_no + 1).to_string())]) }, // also the Save As file name
+            None => if self.untitled_no == 0 { tl!("Untitled").into() } else { craft_i18n::fmt_plain(tl!("Untitled {n}"), &[("n", &(self.untitled_no + 1).to_string())]) }, // also the Save As file name
         }
     }
     fn dirty(&self) -> bool {
@@ -393,7 +393,7 @@ impl Editor {
                 self.docs.push(Doc { path: Some(p), saved: text.clone(), text, untitled_no: 0 });
                 self.active = self.docs.len() - 1;
             }
-            Err(e) => self.status = tf!("Could not open {path}: {error}", path = craft_i18n::ltr(&p.display().to_string()), error = e),
+            Err(e) => self.status = craft_i18n::fmt(I18N.tc(CURRENT.get(), "@msg", "Couldn't open {name}: {e}"), &[("name", &craft_i18n::ltr(&p.display().to_string())), ("e", &e.to_string())]),
         }
     }
 
@@ -498,7 +498,7 @@ impl Editor {
         let text = &self.docs[self.active].text;
         let hits = find_all(text, &self.find_text, self.find_case);
         if hits.is_empty() {
-            self.status = tl!("No matches").into();
+            self.status = tl!("No matches.").into();
             return;
         }
         // current cursor byte offset
@@ -644,8 +644,8 @@ const CMDS: &[(Cmd, &str, &str, &[&str])] = &[
     (Cmd::ToggleMinimap, "view.minimap", "View: Toggle Minimap", &[]),
     (Cmd::WordWrap, "view.word_wrap", "View: Toggle Word Wrap", &["Cmd+Alt+W"]),
     // craft-keymap lets = and + stand for each other, so Cmd+= also covers Cmd++.
-    (Cmd::Bigger, "view.font_bigger", "View: Larger Font", &["Cmd+="]),
-    (Cmd::Smaller, "view.font_smaller", "View: Smaller Font", &["Cmd+-"]),
+    (Cmd::Bigger, "view.font_bigger", "View: Increase Font Size", &["Cmd+="]),
+    (Cmd::Smaller, "view.font_smaller", "View: Decrease Font Size", &["Cmd+-"]),
     (Cmd::Quit, "app.quit", "Quit", &["Cmd+Q"]),
 ];
 
@@ -763,8 +763,8 @@ impl Editor {
                     ui.menu_button(name, |ui| {
                         for &i in items {
                             let (cmd, id, label, _) = CMDS[i];
-                            let label = tid!(id, label);
-                            let short = label.split_once(": ").map_or(label, |(_, l)| l);
+                            // The short label is its own key, so shared rows ("Open…", "Save") translate it.
+                            let short = tl!(label.split_once(": ").map_or(label, |(_, l)| l));
                             if ui.add(egui::Button::new(short).shortcut_text(self.shortcut_text(id))).clicked() {
                                 chosen = Some(cmd);
                             }
@@ -808,7 +808,7 @@ impl Editor {
         egui::Panel::bottom("find").frame(egui::Frame::NONE.fill(BG_SIDE).inner_margin(egui::Margin::symmetric(10, 6))).show(ui, |ui| {
             let n = find_all(&self.docs[self.active].text, &self.find_text, self.find_case).len();
             ui.horizontal(|ui| {
-                ui.toggle_value(&mut self.find_case, RichText::new(icon(Icon::CaseSensitive))).on_hover_text(tl!("Match case"));
+                ui.toggle_value(&mut self.find_case, RichText::new(icon(Icon::CaseSensitive))).on_hover_text(tl!("Case Sensitive"));
                 let r = ui.add(egui::TextEdit::singleline(&mut self.find_text).hint_text(tl!("Find")).desired_width(320.0));
                 if self.find_focus {
                     r.request_focus();
@@ -820,7 +820,7 @@ impl Editor {
                     r.request_focus();
                 }
                 if ui.button(format!("{} {}", icon(Icon::ArrowDown), tl!("Find"))).clicked() { self.find_step(true); }
-                if ui.button(format!("{} {}", icon(Icon::ArrowUp), tl!("Prev"))).clicked() { self.find_step(false); }
+                if ui.button(format!("{} {}", icon(Icon::ArrowUp), tl!("Previous"))).clicked() { self.find_step(false); }
                 ui.label(RichText::new(if self.find_text.is_empty() { String::new() } else { trn!(n, "{n} match", "{n} matches") }).color(FG_DIM));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(icon(Icon::X)).on_hover_text(tl!("Close")).clicked() { self.find_open = false; }
