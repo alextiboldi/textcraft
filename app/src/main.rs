@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-// ---------- palette (original, not taken from any product) ----------
+// ---------- palette: chosen when TextCraft was first generated, before any picture was available; not sampled from a screen ----------
 const BG: Color32 = Color32::from_rgb(0x1e, 0x21, 0x27);
 const BG_SIDE: Color32 = Color32::from_rgb(0x17, 0x19, 0x1e);
 const BG_TABBAR: Color32 = Color32::from_rgb(0x14, 0x16, 0x1a);
