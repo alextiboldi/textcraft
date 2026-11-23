@@ -11,6 +11,7 @@ craft-keymap = { git = "https://github.com/storytold/craft-libs", rev = "15cd58b
 craft-quit = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5ea74abda83e541f34191e465163593", features = ["egui"] }
 craft-settings = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5ea74abda83e541f34191e465163593" }
 serde = { version = "1", features = ["derive"] }
+craft-menu = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5ea74abda83e541f34191e465163593" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 winit = "0.30"
 lucide-icons = "1.78"
