@@ -2,6 +2,8 @@
 // line numbers, minimap, find & replace, go to line, command palette).
 use craft_dialogs::{Answer, Dialogs, FileDialog, Message, MessageButtons, MessageLevel, MessageResult};
 use craft_keymap::{egui::Dispatcher, Active, Bindable, Binding, CommandRef, Keymap, Scope, Scopes};
+use craft_ui::buttons::{ButtonVisuals, IconButton, IconButtonStyle};
+use craft_ui::capture::CaptureSlot;
 use eframe::egui::{
     self, text::LayoutJob, Color32, FontFamily, FontId, Key, Pos2, Rect, RichText, Sense, Stroke,
     TextFormat, Vec2,
@@ -9,7 +11,6 @@ use eframe::egui::{
 use egui::text::{CCursor, CCursorRange};
 use lucide_icons::Icon;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 // ---------- palette (original, not taken from any product) ----------
@@ -30,6 +31,34 @@ const C_MATCH: Color32 = Color32::from_rgba_premultiplied(0x60, 0x50, 0x10, 0xa0
 
 fn icon(i: Icon) -> String {
     i.unicode().to_string()
+}
+
+/// Frameless icon buttons (tab close, new tab, side bar toggle).
+const PLAIN_ICON: IconButtonStyle = {
+    let normal = ButtonVisuals { fill: Color32::TRANSPARENT, stroke: Stroke::NONE, icon: FG_DIM };
+    IconButtonStyle {
+        normal,
+        hovered: ButtonVisuals { fill: BG_LINE, icon: FG, ..normal },
+        pressed: None,
+        selected: ButtonVisuals { icon: FG, ..normal },
+        corner_radius: egui::CornerRadius::same(4),
+        focus_stroke: Stroke { width: 1.0, color: FG },
+    }
+};
+
+/// Icon buttons framed like egui's own buttons, for rows of framed buttons (find bar).
+fn framed_icon(ui: &egui::Ui) -> IconButtonStyle {
+    let (w, focus) = (&ui.visuals().widgets, ui.visuals().selection.stroke);
+    let v = |s: &egui::style::WidgetVisuals| ButtonVisuals { fill: s.weak_bg_fill, stroke: s.bg_stroke, icon: s.fg_stroke.color };
+    IconButtonStyle { normal: v(&w.inactive), hovered: v(&w.hovered), pressed: Some(v(&w.active)), selected: v(&w.active), corner_radius: w.inactive.corner_radius, focus_stroke: focus }
+}
+
+/// An icon-only button: `glyph` (a Lucide font glyph) drawn centred, `label` for screen readers.
+fn icon_button(ui: &mut egui::Ui, style: &IconButtonStyle, label: &str, glyph: Icon, size: f32) -> egui::Response {
+    let side = ui.spacing().interact_size.y;
+    IconButton::new(label, Vec2::splat(side), style).show(ui, |ui, rect, tint| {
+        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon(glyph), FontId::proportional(size), tint);
+    })
 }
 
 // ---------- syntax colouring ----------
@@ -247,7 +276,7 @@ struct Editor {
     // screenshot mode
     shot: Option<PathBuf>,
     frame: u32,
-    shot_done: Arc<AtomicBool>,
+    capture: Option<CaptureSlot>,
     quit_confirmed: bool,
     asking_quit: bool,
     logo_tex: Option<egui::TextureHandle>,
@@ -315,7 +344,7 @@ impl Editor {
             status: String::new(),
             shot,
             frame: 0,
-            shot_done: Arc::new(AtomicBool::new(false)),
+            capture: None,
             quit_confirmed: false,
             asking_quit: false,
             logo_tex: None,
@@ -663,17 +692,25 @@ impl eframe::App for Editor {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
             ctx.request_repaint();
             if self.frame == 120 {
-                let done = self.shot_done.clone();
-                ctx.request_screenshot(move |img| {
+                // A per-image bound well above a full-screen 5K capture.
+                let (slot, callback) = CaptureSlot::new(&ctx, ctx.viewport_id(), 512 << 20);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(callback));
+                self.capture = Some(slot);
+            }
+            let result = self.capture.as_ref().and_then(CaptureSlot::take);
+            let done = result.is_some();
+            match result {
+                Some(Ok(img)) => {
                     let [w, h] = img.size;
                     let raw: Vec<u8> = img.pixels.iter().flat_map(|p| p.to_array()).collect();
                     if let Err(e) = image::save_buffer(&path, &raw, w as u32, h as u32, image::ColorType::Rgba8) {
                         eprintln!("screenshot failed: {e}");
                     }
-                    done.store(true, Ordering::SeqCst);
-                });
+                }
+                Some(Err(e)) => eprintln!("screenshot failed: {e}"),
+                None => {}
             }
-            if self.shot_done.load(Ordering::SeqCst) || self.frame > 600 {
+            if done || self.frame > 600 {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
@@ -755,7 +792,10 @@ impl Editor {
         egui::Panel::bottom("status").frame(egui::Frame::NONE.fill(BG_TABBAR).inner_margin(egui::Margin::symmetric(10, 4))).show(ui, |ui| {
             ui.horizontal(|ui| {
                 let small = |s: String| RichText::new(s).size(12.0).color(FG_DIM);
-                if ui.add(egui::Button::new(small(icon(Icon::PanelLeft))).frame(false)).on_hover_text("Toggle side bar").clicked() {
+                let toggle = IconButton::new("Side bar", Vec2::splat(18.0), &PLAIN_ICON).selected(self.show_sidebar).show(ui, |ui, rect, tint| {
+                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon(Icon::PanelLeft), FontId::proportional(12.0), tint);
+                });
+                if toggle.on_hover_text("Toggle side bar").clicked() {
                     self.show_sidebar = !self.show_sidebar;
                 }
                 ui.label(small(format!("Line {}, Column {}", self.cursor_line, self.cursor_col)));
@@ -790,7 +830,7 @@ impl Editor {
                 if ui.button(format!("{} Prev", icon(Icon::ArrowUp))).clicked() { self.find_step(false); }
                 ui.label(RichText::new(if self.find_text.is_empty() { String::new() } else { format!("{n} matches") }).color(FG_DIM));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(icon(Icon::X)).on_hover_text("Close").clicked() { self.find_open = false; }
+                    if icon_button(ui, &framed_icon(ui), "Close find bar", Icon::X, 14.0).on_hover_text("Close").clicked() { self.find_open = false; }
                     ui.toggle_value(&mut self.replace_open, icon(Icon::Replace)).on_hover_text("Show replace");
                 });
             });
@@ -854,21 +894,23 @@ impl Editor {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(icon(Icon::FileText)).size(12.0).color(if active { ACCENT } else { FG_DIM }));
                                 ui.label(RichText::new(d.title()).color(if active { FG } else { FG_DIM }));
-                                let mark = if d.dirty() { icon(Icon::Circle) } else { icon(Icon::X) };
-                                if ui.add(egui::Button::new(RichText::new(mark).size(11.0).color(FG_DIM)).frame(false)).on_hover_text("Close").clicked() {
+                                let (mark, label) = if d.dirty() { (Icon::Circle, "Close tab, unsaved changes") } else { (Icon::X, "Close tab") };
+                                if icon_button(ui, &PLAIN_ICON, label, mark, 11.0).on_hover_text("Close").clicked() {
                                     close = Some(i);
                                 }
                             });
                         });
-                        if ui.interact(r.response.rect, ui.scope_id().with(("tab", i)), Sense::click()).clicked() {
+                        let title = d.title();
+                        let tab = craft_ui::tabs::Tab::new(ui.scope_id().with(("tab", i)), &title, active).show_at(ui, r.response.rect, |ui, resp| {
+                            if active {
+                                ui.painter().hline(resp.rect.x_range(), resp.rect.top(), Stroke::new(2.0, ACCENT));
+                            }
+                        });
+                        if tab.clicked() {
                             switch_to = Some(i);
                         }
-                        if active {
-                            let rr = r.response.rect;
-                            ui.painter().hline(rr.x_range(), rr.top(), Stroke::new(2.0, ACCENT));
-                        }
                     }
-                    if ui.add(egui::Button::new(RichText::new(icon(Icon::Plus)).color(FG_DIM)).frame(false)).on_hover_text("New file").clicked() {
+                    if icon_button(ui, &PLAIN_ICON, "New file", Icon::Plus, 14.0).on_hover_text("New file").clicked() {
                         self.new_file();
                     }
                 });
