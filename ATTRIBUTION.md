@@ -1,5 +1,6 @@
 # Attribution
 
+TextCraft's own code and original assets are under MIT OR Apache-2.0 (see [NOTICE](NOTICE)).
 Third-party material in TextCraft, with its author, source and licence. The notices to ship with
 the app are in [NOTICE](NOTICE); the licence texts, copied unmodified from the sources named below,
 are in `licenses/`.
