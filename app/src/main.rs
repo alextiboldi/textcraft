@@ -276,6 +276,11 @@ enum Then {
     ConfirmQuit,
 }
 
+/// The editor text field of document `doc` (its stable id, not its tab index).
+fn editor_id(doc: u64) -> egui::Id {
+    egui::Id::unique(("editor", doc))
+}
+
 #[derive(PartialEq)]
 enum Overlay {
     None,
@@ -309,6 +314,8 @@ struct Editor {
     row_height: f32,
     scroll_to: Option<f32>,
     pending_select: Option<(usize, usize)>, // char range
+    /// The document whose editor last took the keyboard; a different one shown takes it.
+    editor_doc: Option<u64>,
     status: String,
     // screenshot mode
     shot: Option<PathBuf>,
@@ -399,6 +406,7 @@ impl Editor {
             row_height: 17.0,
             scroll_to: None,
             pending_select: None,
+            editor_doc: None,
             status: problems.join("; "),
             shot,
             frame: 0,
@@ -1128,7 +1136,14 @@ impl Editor {
         let lang = self.docs[self.active].lang();
         let (find_text, find_case, find_open) = (self.find_text.clone(), self.find_case, self.find_open);
         let wrap = self.word_wrap;
-        let edit_id = egui::Id::unique(("editor", self.active));
+        let doc_id = self.docs[self.active].id;
+        let edit_id = editor_id(doc_id);
+        // A newly shown document (new, opened, switched to, or left after a close) takes the
+        // keyboard once, so typing goes to it; after that, focus stays where the user puts it.
+        if self.editor_doc != Some(doc_id) {
+            self.editor_doc = Some(doc_id);
+            ui.ctx().memory_mut(|m| m.request_focus(edit_id));
+        }
 
         // apply a pending cursor move (go to line, find)
         if let Some((s, e)) = self.pending_select.take() {
@@ -1167,7 +1182,7 @@ impl Editor {
         };
 
         let mut out_cursor = None;
-        let mut scroll = egui::ScrollArea::both().id_salt(("scroll", self.active)).auto_shrink([false, false]);
+        let mut scroll = egui::ScrollArea::both().id_salt(("scroll", doc_id)).auto_shrink([false, false]);
         if let Some(y) = self.scroll_to.take() {
             scroll = scroll.vertical_scroll_offset(y);
         }
@@ -1502,6 +1517,25 @@ mod tests {
         assert_eq!(args.files, [PathBuf::from("notes.txt"), PathBuf::from("-dash.txt")]);
         assert!(args.shot.is_none());
         assert!(parse(&["--screenshot", "shot.png", "-NSDocumentRevisionsDebugMode", "YES"]).shot.is_some());
+    }
+
+    #[test]
+    fn the_shown_document_gets_the_keyboard() {
+        let ctx = egui::Context::default();
+        // A screenshot path keeps the settings in memory, away from the user's config.toml.
+        let mut ed = Editor::new(&ctx, Some(std::env::temp_dir().join("textcraft-focus-unused.png")), vec![]);
+        let frame = |ed: &mut Editor| {
+            for _ in 0..2 {
+                // No renderer here: the suite's egui wants texture updates handled, so drop them.
+                ctx.run_ui(Default::default(), |ui| ed.editor_area(ui)).textures_delta.clear();
+            }
+            ctx.memory(|m| m.focused())
+        };
+        assert_eq!(frame(&mut ed), Some(editor_id(ed.docs[ed.active].id)), "the editor has the keyboard at start");
+        ed.new_file(); // ⌘N
+        assert_eq!(frame(&mut ed), Some(editor_id(ed.docs[ed.active].id)), "the new tab's editor has the keyboard");
+        ed.active = 0; // switching back, as a tab click or Ctrl+Tab does
+        assert_eq!(frame(&mut ed), Some(editor_id(ed.docs[0].id)));
     }
 
     #[test]
