@@ -1,0 +1,26 @@
+TextCraft
+Copyright (c) 2026 the TextCraft contributors.
+
+Third-party material
+
+This product bundles third-party material under its own licenses, listed below. The per-file
+list (author, source, license) is in ATTRIBUTION.md; the license texts are in licenses/.
+
+Ubuntu Light font (embedded through egui's epaint_default_fonts 0.37.0) — Ubuntu Font Licence 1.0.
+  Copyright 2011 Canonical Ltd. See licenses/egui-default-fonts/UFL.txt.
+Hack Regular font (embedded through egui's epaint_default_fonts 0.37.0) — MIT, Copyright (c) 2018
+  Source Foundry Authors; based on Bitstream Vera Sans Mono, Copyright (c) 2003 Bitstream, Inc.,
+  under the Bitstream Vera License (Reserved Font Names "Bitstream" and "Vera"), and on DejaVu,
+  committed to the public domain. See licenses/egui-default-fonts/Hack-Regular.txt.
+egui-icons font (embedded through egui's epaint_default_fonts 0.37.0), a five-glyph subset of
+  emoji-icon-font by John Slegers — MIT, Copyright (c) 2014 John Slegers.
+  See licenses/egui-default-fonts/egui-icons.txt and emoji-icon-font-mit-license.txt.
+Lucide icon font (embedded through the lucide-icons 1.78.0 crate, Lucide release 1.78.0) — ISC,
+  Copyright (c) 2026 Lucide Icons and Contributors; icons derived from Feather are also MIT,
+  Copyright (c) 2013-present Cole Bemis. See licenses/lucide/LICENSE.
+Unicode normalization and character property data (embedded through ICU4X's icu_normalizer_data
+  and icu_properties_data 2.4.0, used by egui's link handling) — Unicode License v3,
+  Copyright (c) 2020-2024 Unicode, Inc. See licenses/icu4x/LICENSE.
+
+The TextCraft logo (app/assets/logo.png and the window icon) is original work, drawn in code by
+app/src/main.rs.
