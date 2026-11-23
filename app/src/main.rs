@@ -1398,7 +1398,7 @@ fn logo_rgba(size: usize) -> Vec<u8> {
             let mut c = [bg[0], bg[1], bg[2]];
             let mut paint = |d: f32, col: Color32| {
                 let a = cover(d);
-                for k in 0..3 { c[k] = c[k] * (1.0 - a) + col.to_array()[k] as f32 * a; }
+                for (ck, k) in c.iter_mut().zip(col.to_array()) { *ck = *ck * (1.0 - a) + k as f32 * a; }
             };
             // amber I-beam cursor
             let stem = rbox(x, y, 0.27, 0.24, 0.35, 0.76, 0.02);
