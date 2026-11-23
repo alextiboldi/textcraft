@@ -254,6 +254,8 @@ struct Editor {
     dialogs: Dialogs<Then>,
     keymap: Keymap,
     dispatcher: Dispatcher,
+    /// The macOS menu bar; `None` elsewhere, or when AppKit refused it (the in-window menus show then).
+    native_menu: Option<craft_menu::NativeMenu>,
 }
 
 const SAMPLE: &str = r#"// Welcome to TextCraft.
@@ -322,7 +324,14 @@ impl Editor {
             dialogs: Dialogs::new(Arc::new(move || wake_ctx.request_repaint())),
             keymap: keymap(craft_keymap::egui::platform(ctx)),
             dispatcher: Dispatcher::new(),
+            native_menu: None,
         };
+        // `new` runs in eframe's creator closure, so this replaces winit's default menu (whose Quit
+        // skips the unsaved-changes check).
+        #[cfg(target_os = "macos")]
+        {
+            ed.native_menu = craft_menu::mac::install(ctx, &mac_menus(&ed.keymap).bar);
+        }
         for f in files {
             if f.is_dir() {
                 ed.folder = Some(f);
@@ -622,6 +631,44 @@ const CMDS: &[(Cmd, &str, &str, &[&str])] = &[
     (Cmd::Quit, "app.quit", "Quit", &["Cmd+Q"]),
 ];
 
+/// The menus, as rows of `CMDS`.
+const MENUS: [(&str, &[usize]); 4] = [
+    ("File", &[0, 1, 2, 3, 4, 5, 6, 21]),
+    ("Edit", &[9, 10, 11, 12]),
+    ("Goto", &[15, 14, 13, 7, 8]),
+    ("View", &[16, 17, 18, 19, 20]),
+];
+
+/// A command's label in a menu: without the palette's "File: " prefix.
+fn menu_label(label: &str) -> &str {
+    label.split_once(": ").map_or(label, |(_, l)| l)
+}
+
+/// The macOS menu bar: `MENUS` with the keymap's shortcuts as key equivalents, laid out by
+/// craft-menu (app menu with Hide and Quit, Window, Help). Quit is the app's own command, so ⌘Q
+/// asks about unsaved changes like the close button.
+fn mac_menus(keymap: &Keymap) -> craft_menu::Layout {
+    let rows: Vec<craft_menu::Row> = MENUS
+        .iter()
+        .flat_map(|&(menu, items)| items.iter().filter_map(|&i| CMDS.get(i)).map(move |&(_, id, label, _)| (menu, id, label)))
+        .map(|(menu, id, label)| craft_menu::Row {
+            path: vec![menu.into()],
+            command: CommandRef::new(id),
+            label: menu_label(label).into(),
+            shortcut: None,
+            enabled: true,
+            kind: craft_menu::ItemKind::Plain,
+        })
+        .collect();
+    let mut bar = craft_menu::from_items(&MENUS.map(|m| m.0), &rows);
+    bar.tag_menu("File", craft_menu::MenuRole::File);
+    bar.tag_menu("Edit", craft_menu::MenuRole::Edit);
+    bar.tag_menu("View", craft_menu::MenuRole::View);
+    bar.tag_item(&CommandRef::new("app.quit"), craft_menu::ItemRole::Quit);
+    craft_menu::apply_keymap(&mut bar, keymap);
+    craft_menu::mac_layout(&bar, &craft_menu::LayoutOptions::new("TextCraft"))
+}
+
 fn keymap(platform: craft_keymap::Platform) -> Keymap {
     let catalog = CMDS
         .iter()
@@ -653,6 +700,12 @@ impl eframe::App for Editor {
         craft_quit::on_close_request(ctx);
     }
 
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if let Some(menu) = &mut self.native_menu {
+            menu.raw_input(raw_input);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.handle_dialogs(&ctx);
@@ -678,11 +731,24 @@ impl eframe::App for Editor {
             }
         }
 
+        // native menu picks. Its key equivalents reach the dispatcher below as the key presses
+        // they were, or (while typing) come back here as picks, never both, so each runs once.
+        let mut picked = vec![];
+        if let Some(menu) = &mut self.native_menu {
+            let modal = self.dialogs.is_open();
+            menu.set_gate(craft_menu::Gate { modal, recording_shortcut: false, text_editing: ctx.text_edit_focused() });
+            picked = menu.take_clicks(&ctx);
+            let keymap = &self.keymap;
+            // ponytail: the menus never change while running (no enabled state, fixed keymap), so
+            // the state hash is a constant; hash what they show once they can change.
+            menu.sync_with(0, || mac_menus(keymap));
+        }
+
         // keyboard shortcuts
         let active = Active { typing: ctx.memory(|m| m.focused().is_some()), ..Active::NONE };
         let hits = ctx.input_mut(|i| self.dispatcher.dispatch(i, &self.keymap, &active));
-        for hit in hits {
-            if let Some(&(cmd, ..)) = CMDS.iter().find(|c| CommandRef::new(c.1) == hit.command) {
+        for command in picked.into_iter().chain(hits.into_iter().map(|h| h.command)) {
+            if let Some(&(cmd, ..)) = CMDS.iter().find(|c| CommandRef::new(c.1) == command) {
                 self.run_command(&ctx, cmd);
             }
         }
@@ -695,7 +761,9 @@ impl eframe::App for Editor {
         let title = format!("{}{} — TextCraft", self.docs[self.active].title(), if self.docs[self.active].dirty() { " •" } else { "" });
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
 
-        self.menu_bar(ui, &ctx);
+        if self.native_menu.is_none() {
+            self.menu_bar(ui, &ctx);
+        }
         self.status_bar(ui);
         if self.find_open {
             self.find_bar(ui);
@@ -726,17 +794,11 @@ impl Editor {
                 ui.label(RichText::new("TextCraft").strong().color(FG));
                 ui.add_space(8.0);
                 let mut chosen = None;
-                let groups: [(&str, &[usize]); 4] = [
-                    ("File", &[0, 1, 2, 3, 4, 5, 6, 21]),
-                    ("Edit", &[9, 10, 11, 12]),
-                    ("Goto", &[15, 14, 13, 7, 8]),
-                    ("View", &[16, 17, 18, 19, 20]),
-                ];
-                for (name, items) in groups {
+                for (name, items) in MENUS {
                     ui.menu_button(name, |ui| {
                         for &i in items {
                             let (cmd, id, label, _) = CMDS[i];
-                            let short = label.split_once(": ").map_or(label, |(_, l)| l);
+                            let short = menu_label(label);
                             if ui.add(egui::Button::new(short).shortcut_text(self.shortcut_text(id))).clicked() {
                                 chosen = Some(cmd);
                             }
