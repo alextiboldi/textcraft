@@ -7,7 +7,7 @@ are in `licenses/`.
 
 ## Assets
 
-- `app/assets/logo.png`: our own work. Drawn in code by `logo_rgba` in `app/src/main.rs` (export with `textcraft --export-logo <path>`); no third-party source.
+- `app/assets/logo.webp`: the TextCraft logo, our own work, made by the project maintainer; no third-party source. Embedded in the app and used as its window and Dock icon (`logo_rgba` in `app/src/main.rs`). Under the repository licence.
 
 ## Material embedded through dependencies
 

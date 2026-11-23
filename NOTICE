@@ -37,5 +37,5 @@ Public License 2.0; see licenses/option-ext/LICENSE.txt. Its source code is avai
 https://crates.io/crates/option-ext/0.2.0 and
 https://github.com/soc/option-ext/tree/272f22fc9ea1ac6b08f01704af52c4ac338df4e2.
 
-The TextCraft logo (app/assets/logo.png and the window icon) is original work, drawn in code by
-app/src/main.rs.
+The TextCraft logo (app/assets/logo.webp, also the window and Dock icon) is original work by the
+project maintainer.
