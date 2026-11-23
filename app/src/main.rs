@@ -1416,23 +1416,46 @@ fn logo_rgba(size: usize) -> Vec<u8> {
     out
 }
 
+/// What the command line asks for.
+#[derive(Default)]
+struct Args {
+    shot: Option<PathBuf>,
+    export_logo: Option<PathBuf>,
+    files: Vec<PathBuf>,
+}
+
+/// Reads the arguments after the program name. Other options are ignored rather than opened as
+/// files: macOS passes `-psn_…` and user defaults as `-Name value` pairs (`-AppleLanguages "(fr)"`).
+/// After `--` every argument is a file, so a name starting with `-` can still be opened.
+fn parse_args(args: impl IntoIterator<Item = String>) -> Args {
+    let mut args = args.into_iter();
+    let mut out = Args::default();
+    let mut options = true;
+    while let Some(a) = args.next() {
+        if !options || !a.starts_with('-') {
+            out.files.push(a.into());
+        } else if a == "--" {
+            options = false;
+        } else if a == "--export-logo" {
+            out.export_logo = Some(args.next().unwrap_or_else(|| "logo.png".into()).into());
+        } else if a == "--screenshot" {
+            out.shot = args.next().map(PathBuf::from);
+        } else if !a.starts_with("--") && !a.starts_with("-psn_") {
+            // ponytail: every other single-dash option is taken as a macOS `-Name value` pair.
+            args.next();
+        }
+    }
+    out
+}
+
 fn main() -> eframe::Result {
     // The system's language; the UI runs on this thread. English when no catalog fits.
     CURRENT.set(I18N.system_lang());
-    let mut args = std::env::args().skip(1);
-    let mut shot = None;
-    let mut files = vec![];
-    while let Some(a) = args.next() {
-        if a == "--export-logo" {
-            // writes the logo as a 1024px PNG, e.g. for a website or app bundle
-            let path = args.next().unwrap_or_else(|| "logo.png".into());
-            image::save_buffer(&path, &logo_rgba(1024), 1024, 1024, image::ColorType::Rgba8).expect("could not write logo");
-            return Ok(());
-        } else if a == "--screenshot" {
-            shot = args.next().map(PathBuf::from);
-        } else {
-            files.push(PathBuf::from(a));
-        }
+    let Args { shot, export_logo, files } = parse_args(std::env::args().skip(1));
+    if let Some(path) = export_logo {
+        // writes the logo as a 1024px PNG, e.g. for a website or app bundle
+        image::save_buffer(&path, &logo_rgba(1024), 1024, 1024, image::ColorType::Rgba8).expect("could not write logo");
+        return Ok(());
     }
 
     let mut viewport = egui::ViewportBuilder::default().with_title("TextCraft").with_inner_size([1200.0, 760.0]).with_min_inner_size([500.0, 300.0])
@@ -1475,6 +1498,15 @@ mod tests {
         assert_eq!(toks[0].2, Tok::Keyword);
         assert!(toks.iter().any(|t| t.2 == Tok::Str));
         assert_eq!(toks.last().unwrap().2, Tok::Comment);
+    }
+
+    #[test]
+    fn launch_flags_are_not_opened_as_files() {
+        let parse = |args: &[&str]| parse_args(args.iter().map(|a| a.to_string()));
+        let args = parse(&["-AppleLanguages", "(fr)", "-psn_0_12345", "notes.txt", "--", "-dash.txt"]);
+        assert_eq!(args.files, [PathBuf::from("notes.txt"), PathBuf::from("-dash.txt")]);
+        assert!(args.shot.is_none() && args.export_logo.is_none());
+        assert!(parse(&["--screenshot", "shot.png", "-NSDocumentRevisionsDebugMode", "YES"]).shot.is_some());
     }
 
     #[test]
