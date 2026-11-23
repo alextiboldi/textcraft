@@ -3,15 +3,12 @@
 use craft_dialogs::{Answer, Dialogs, FileDialog, Message, MessageButtons, MessageLevel, MessageResult};
 use craft_keymap::{egui::Dispatcher, Active, Bindable, Binding, CommandRef, Keymap, Scope, Scopes};
 use craft_settings::{Location, SaveStatus, SettingsStore};
-use serde::{Deserialize, Serialize};
 use craft_ui::buttons::{ButtonVisuals, IconButton, IconButtonStyle};
 use craft_ui::capture::CaptureSlot;
-use eframe::egui::{
-    self, text::LayoutJob, Color32, FontFamily, FontId, Key, Pos2, Rect, RichText, Sense, Stroke,
-    TextFormat, Vec2,
-};
+use eframe::egui::{self, text::LayoutJob, Color32, FontFamily, FontId, Key, Pos2, Rect, RichText, Sense, Stroke, TextFormat, Vec2};
 use egui::text::{CCursor, CCursorRange};
 use lucide_icons::Icon;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -52,7 +49,14 @@ const PLAIN_ICON: IconButtonStyle = {
 fn framed_icon(ui: &egui::Ui) -> IconButtonStyle {
     let (w, focus) = (&ui.visuals().widgets, ui.visuals().selection.stroke);
     let v = |s: &egui::style::WidgetVisuals| ButtonVisuals { fill: s.weak_bg_fill, stroke: s.bg_stroke, icon: s.fg_stroke.color };
-    IconButtonStyle { normal: v(&w.inactive), hovered: v(&w.hovered), pressed: Some(v(&w.active)), selected: v(&w.active), corner_radius: w.inactive.corner_radius, focus_stroke: focus }
+    IconButtonStyle {
+        normal: v(&w.inactive),
+        hovered: v(&w.hovered),
+        pressed: Some(v(&w.active)),
+        selected: v(&w.active),
+        corner_radius: w.inactive.corner_radius,
+        focus_stroke: focus,
+    }
 }
 
 /// An icon-only button: `glyph` (a Lucide font glyph) drawn centred, `label` for screen readers.
@@ -77,11 +81,23 @@ static I18N: std::sync::LazyLock<craft_i18n::I18n> = std::sync::LazyLock::new(||
 thread_local! { static CURRENT: std::cell::Cell<craft_i18n::Lang> = const { std::cell::Cell::new(craft_i18n::Lang::EN) }; }
 
 /// English `$s` in the interface language.
-macro_rules! tl { ($s:expr) => { I18N.t(CURRENT.get(), $s) }; }
+macro_rules! tl {
+    ($s:expr) => {
+        I18N.t(CURRENT.get(), $s)
+    };
+}
 /// A command's label by its id.
-macro_rules! tid { ($id:expr, $label:expr) => { I18N.tid(CURRENT.get(), $id, $label) }; }
+macro_rules! tid {
+    ($id:expr, $label:expr) => {
+        I18N.tid(CURRENT.get(), $id, $label)
+    };
+}
 /// A count's wording, `{n}` filled: `trn!(n, "{n} match", "{n} matches")`.
-macro_rules! trn { ($n:expr, $one:expr, $other:expr) => { I18N.trn(CURRENT.get(), $n as u64, $one, $other) }; }
+macro_rules! trn {
+    ($n:expr, $one:expr, $other:expr) => {
+        I18N.trn(CURRENT.get(), $n as u64, $one, $other)
+    };
+}
 /// `{name}` placeholders of a translated message filled in.
 macro_rules! tf { ($s:expr, $($k:ident = $v:expr),+ $(,)?) => { craft_i18n::fmt(tl!($s), &[$((stringify!($k), &$v.to_string())),+]) }; }
 
@@ -126,16 +142,169 @@ const PLAIN: Lang = Lang { name: "Plain Text", keywords: &[], line_comment: "", 
 fn lang_for(path: &str) -> Lang {
     let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
-        "rs" => Lang { name: "Rust", line_comment: "//", block_comment: true, keywords: &[
-            "as","break","const","continue","crate","else","enum","extern","false","fn","for","if","impl","in","let","loop","match","mod","move","mut","pub","ref","return","self","Self","static","struct","super","trait","true","type","unsafe","use","where","while","async","await","dyn"] },
-        "py" => Lang { name: "Python", line_comment: "#", block_comment: false, keywords: &[
-            "and","as","assert","async","await","break","class","continue","def","del","elif","else","except","False","finally","for","from","global","if","import","in","is","lambda","None","nonlocal","not","or","pass","raise","return","True","try","while","with","yield","self"] },
-        "js" | "jsx" | "ts" | "tsx" | "mjs" | "json" => Lang { name: if ext.starts_with('t') { "TypeScript" } else if ext == "json" { "JSON" } else { "JavaScript" }, line_comment: "//", block_comment: true, keywords: &[
-            "break","case","catch","class","const","continue","default","delete","do","else","export","extends","false","finally","for","function","if","import","in","instanceof","let","new","null","return","super","switch","this","throw","true","try","typeof","undefined","var","void","while","yield","async","await","of","from","interface","type"] },
-        "c" | "h" | "cpp" | "hpp" | "cc" | "java" | "cs" | "go" | "swift" | "kt" => Lang { name: match ext.as_str() { "java" => "Java", "cs" => "C#", "go" => "Go", "swift" => "Swift", "kt" => "Kotlin", "c" | "h" => "C", _ => "C++" }, line_comment: "//", block_comment: true, keywords: &[
-            "auto","break","case","char","class","const","continue","default","do","double","else","enum","extern","false","float","for","func","fun","goto","if","import","int","long","namespace","new","nil","null","package","private","protected","public","return","short","signed","sizeof","static","struct","switch","template","this","true","typedef","union","unsigned","using","var","void","volatile","while","let","val","interface","go","defer","range","map","chan","bool","string"] },
-        "sh" | "bash" | "zsh" | "toml" | "yaml" | "yml" | "rb" => Lang { name: match ext.as_str() { "toml" => "TOML", "yaml" | "yml" => "YAML", "rb" => "Ruby", _ => "Shell Script" }, line_comment: "#", block_comment: false, keywords: &[
-            "if","then","else","elif","fi","for","in","do","done","while","case","esac","function","return","export","local","def","end","class","module","true","false","nil"] },
+        "rs" => Lang {
+            name: "Rust",
+            line_comment: "//",
+            block_comment: true,
+            keywords: &[
+                "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop",
+                "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type",
+                "unsafe", "use", "where", "while", "async", "await", "dyn",
+            ],
+        },
+        "py" => Lang {
+            name: "Python",
+            line_comment: "#",
+            block_comment: false,
+            keywords: &[
+                "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "False", "finally",
+                "for", "from", "global", "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True",
+                "try", "while", "with", "yield", "self",
+            ],
+        },
+        "js" | "jsx" | "ts" | "tsx" | "mjs" | "json" => Lang {
+            name: if ext.starts_with('t') {
+                "TypeScript"
+            } else if ext == "json" {
+                "JSON"
+            } else {
+                "JavaScript"
+            },
+            line_comment: "//",
+            block_comment: true,
+            keywords: &[
+                "break",
+                "case",
+                "catch",
+                "class",
+                "const",
+                "continue",
+                "default",
+                "delete",
+                "do",
+                "else",
+                "export",
+                "extends",
+                "false",
+                "finally",
+                "for",
+                "function",
+                "if",
+                "import",
+                "in",
+                "instanceof",
+                "let",
+                "new",
+                "null",
+                "return",
+                "super",
+                "switch",
+                "this",
+                "throw",
+                "true",
+                "try",
+                "typeof",
+                "undefined",
+                "var",
+                "void",
+                "while",
+                "yield",
+                "async",
+                "await",
+                "of",
+                "from",
+                "interface",
+                "type",
+            ],
+        },
+        "c" | "h" | "cpp" | "hpp" | "cc" | "java" | "cs" | "go" | "swift" | "kt" => Lang {
+            name: match ext.as_str() {
+                "java" => "Java",
+                "cs" => "C#",
+                "go" => "Go",
+                "swift" => "Swift",
+                "kt" => "Kotlin",
+                "c" | "h" => "C",
+                _ => "C++",
+            },
+            line_comment: "//",
+            block_comment: true,
+            keywords: &[
+                "auto",
+                "break",
+                "case",
+                "char",
+                "class",
+                "const",
+                "continue",
+                "default",
+                "do",
+                "double",
+                "else",
+                "enum",
+                "extern",
+                "false",
+                "float",
+                "for",
+                "func",
+                "fun",
+                "goto",
+                "if",
+                "import",
+                "int",
+                "long",
+                "namespace",
+                "new",
+                "nil",
+                "null",
+                "package",
+                "private",
+                "protected",
+                "public",
+                "return",
+                "short",
+                "signed",
+                "sizeof",
+                "static",
+                "struct",
+                "switch",
+                "template",
+                "this",
+                "true",
+                "typedef",
+                "union",
+                "unsigned",
+                "using",
+                "var",
+                "void",
+                "volatile",
+                "while",
+                "let",
+                "val",
+                "interface",
+                "go",
+                "defer",
+                "range",
+                "map",
+                "chan",
+                "bool",
+                "string",
+            ],
+        },
+        "sh" | "bash" | "zsh" | "toml" | "yaml" | "yml" | "rb" => Lang {
+            name: match ext.as_str() {
+                "toml" => "TOML",
+                "yaml" | "yml" => "YAML",
+                "rb" => "Ruby",
+                _ => "Shell Script",
+            },
+            line_comment: "#",
+            block_comment: false,
+            keywords: &[
+                "if", "then", "else", "elif", "fi", "for", "in", "do", "done", "while", "case", "esac", "function", "return", "export", "local",
+                "def", "end", "class", "module", "true", "false", "nil",
+            ],
+        },
         "md" | "markdown" => Lang { name: "Markdown", ..PLAIN },
         _ => PLAIN,
     }
@@ -153,26 +322,36 @@ fn tokenize(text: &str, lang: &Lang) -> Vec<(usize, usize, Tok)> {
         let start = i;
         let kind;
         if !lc.is_empty() && b[i..].starts_with(lc) {
-            while i < b.len() && b[i] != b'\n' { i += 1; }
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
             kind = Tok::Comment;
         } else if lang.block_comment && b[i..].starts_with(b"/*") {
             i += 2;
-            while i < b.len() && !b[i..].starts_with(b"*/") { i += 1; }
+            while i < b.len() && !b[i..].starts_with(b"*/") {
+                i += 1;
+            }
             i = (i + 2).min(b.len());
             kind = Tok::Comment;
         } else if lang.name != "Plain Text" && lang.name != "Markdown" && (c == b'"' || c == b'\'' || c == b'`') {
             i += 1;
             while i < b.len() && b[i] != c && b[i] != b'\n' {
-                if b[i] == b'\\' { i += 1; }
+                if b[i] == b'\\' {
+                    i += 1;
+                }
                 i += 1;
             }
             i = (i + 1).min(b.len());
             kind = Tok::Str;
         } else if c.is_ascii_digit() {
-            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'.' || b[i] == b'_') { i += 1; }
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'.' || b[i] == b'_') {
+                i += 1;
+            }
             kind = if lang.name == "Plain Text" { Tok::Plain } else { Tok::Num };
         } else if c.is_ascii_alphabetic() || c == b'_' {
-            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') { i += 1; }
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                i += 1;
+            }
             let word = &text[start..i];
             kind = if lang.keywords.contains(&word) {
                 Tok::Keyword
@@ -190,9 +369,13 @@ fn tokenize(text: &str, lang: &Lang) -> Vec<(usize, usize, Tok)> {
             i += text[i..].chars().next().map_or(1, |ch| ch.len_utf8());
             kind = Tok::Plain;
         }
-        if i > b.len() { i = b.len(); }
+        if i > b.len() {
+            i = b.len();
+        }
         // keep string/comment ends on char boundaries
-        while !text.is_char_boundary(i) { i += 1; }
+        while !text.is_char_boundary(i) {
+            i += 1;
+        }
         match out.last_mut() {
             Some((_, end, k)) if *k == kind && *end == start => *end = i,
             _ => out.push((start, i, kind)),
@@ -215,7 +398,9 @@ fn char_idx(text: &str, byte: usize) -> usize {
 }
 
 fn byte_of_line(text: &str, line: usize) -> usize {
-    if line <= 1 { return 0; }
+    if line <= 1 {
+        return 0;
+    }
     text.match_indices('\n').nth(line - 2).map_or(text.len(), |(i, _)| i + 1)
 }
 
@@ -251,7 +436,13 @@ impl Doc {
     fn title(&self) -> String {
         match &self.path {
             Some(p) => p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-            None => if self.untitled_no == 0 { tl!("Untitled").into() } else { craft_i18n::fmt_plain(tl!("Untitled {n}"), &[("n", &(self.untitled_no + 1).to_string())]) }, // also the Save As file name
+            None => {
+                if self.untitled_no == 0 {
+                    tl!("Untitled").into()
+                } else {
+                    craft_i18n::fmt_plain(tl!("Untitled {n}"), &[("n", &(self.untitled_no + 1).to_string())])
+                }
+            } // also the Save As file name
         }
     }
     fn dirty(&self) -> bool {
@@ -370,7 +561,10 @@ impl Editor {
         let keymap = keymap(craft_keymap::egui::platform(ctx)).with_overrides(settings.get().shortcuts.clone());
         let mut problems = vec![];
         if let Some(path) = &report.broken_moved_to {
-            problems.push(tf!("config.toml was damaged and moved to {path}; using default settings", path = craft_i18n::ltr(&path.display().to_string())));
+            problems.push(tf!(
+                "config.toml was damaged and moved to {path}; using default settings",
+                path = craft_i18n::ltr(&path.display().to_string())
+            ));
         }
         for e in &report.section_errors {
             problems.push(tf!("settings [{section}] reset to defaults: {reason}", section = e.section, reason = e.message));
@@ -379,7 +573,11 @@ impl Editor {
             problems.push(tf!("settings will not be saved: {reason}", reason = why));
         }
         if !keymap.problems().is_empty() {
-            problems.push(trn!(keymap.problems().len(), "{n} shortcut entry in config.toml could not be used", "{n} shortcut entries in config.toml could not be used"));
+            problems.push(trn!(
+                keymap.problems().len(),
+                "{n} shortcut entry in config.toml could not be used",
+                "{n} shortcut entries in config.toml could not be used"
+            ));
         }
         let mut ed = Editor {
             docs: vec![],
@@ -463,13 +661,23 @@ impl Editor {
             Ok(bytes) => {
                 let text = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
                 // Replace a pristine empty untitled tab instead of piling up tabs.
-                if self.docs.len() == 1 && self.docs[0].path.is_none() && !self.docs[0].dirty() && self.docs[0].untitled_no != 0 && self.docs[0].text.is_empty() {
+                if self.docs.len() == 1
+                    && self.docs[0].path.is_none()
+                    && !self.docs[0].dirty()
+                    && self.docs[0].untitled_no != 0
+                    && self.docs[0].text.is_empty()
+                {
                     self.docs.clear();
                 }
                 self.docs.push(Doc::new(Some(p), text, 0));
                 self.active = self.docs.len() - 1;
             }
-            Err(e) => self.status = craft_i18n::fmt(I18N.tc(CURRENT.get(), "@msg", "Couldn't open {name}: {e}"), &[("name", &craft_i18n::ltr(&p.display().to_string())), ("e", &e.to_string())]),
+            Err(e) => {
+                self.status = craft_i18n::fmt(
+                    I18N.tc(CURRENT.get(), "@msg", "Couldn't open {name}: {e}"),
+                    &[("name", &craft_i18n::ltr(&p.display().to_string())), ("e", &e.to_string())],
+                )
+            }
         }
     }
 
@@ -585,14 +793,11 @@ impl Editor {
             return;
         }
         // current cursor byte offset
-        let cur = byte_of_line(text, self.cursor_line) + text[byte_of_line(text, self.cursor_line)..].chars().take(self.cursor_col - 1).map(|c| c.len_utf8()).sum::<usize>();
-        let pick = if forward {
-            hits.iter().find(|h| h.0 >= cur).or(hits.first())
-        } else {
-            hits.iter().rev().find(|h| h.1 < cur).or(hits.last())
-        }
-        .copied()
-        .unwrap();
+        let cur = byte_of_line(text, self.cursor_line)
+            + text[byte_of_line(text, self.cursor_line)..].chars().take(self.cursor_col - 1).map(|c| c.len_utf8()).sum::<usize>();
+        let pick = if forward { hits.iter().find(|h| h.0 >= cur).or(hits.first()) } else { hits.iter().rev().find(|h| h.1 < cur).or(hits.last()) }
+            .copied()
+            .unwrap();
         // select it; cursor goes to the end so the next search moves on
         let (s, e) = (char_idx(text, pick.0), char_idx(text, pick.1));
         let line = text[..pick.0].matches('\n').count() + 1;
@@ -670,14 +875,24 @@ impl Editor {
             Cmd::SaveAs => self.save(self.active, true, false),
             Cmd::SaveAll => {
                 for i in 0..self.docs.len() {
-                    if self.docs[i].dirty() { self.save(i, false, false); }
+                    if self.docs[i].dirty() {
+                        self.save(i, false, false);
+                    }
                 }
             }
             Cmd::CloseTab => self.close_tab(self.active),
             Cmd::NextTab => self.active = (self.active + 1) % self.docs.len(),
             Cmd::PrevTab => self.active = (self.active + self.docs.len() - 1) % self.docs.len(),
-            Cmd::Find => { self.find_open = true; self.replace_open = false; self.find_focus = true; }
-            Cmd::Replace => { self.find_open = true; self.replace_open = true; self.find_focus = true; }
+            Cmd::Find => {
+                self.find_open = true;
+                self.replace_open = false;
+                self.find_focus = true;
+            }
+            Cmd::Replace => {
+                self.find_open = true;
+                self.replace_open = true;
+                self.find_focus = true;
+            }
             Cmd::FindNext => self.find_step(true),
             Cmd::FindPrev => self.find_step(false),
             Cmd::GotoLine => self.open_palette(":"),
@@ -699,9 +914,28 @@ fn dirs_home() -> PathBuf {
 
 #[derive(Clone, Copy)]
 enum Cmd {
-    NewFile, Open, OpenFolder, Save, SaveAs, SaveAll, CloseTab, NextTab, PrevTab,
-    Find, Replace, FindNext, FindPrev, GotoLine, GotoFile, Palette,
-    ToggleSidebar, ToggleMinimap, WordWrap, Bigger, Smaller, Quit,
+    NewFile,
+    Open,
+    OpenFolder,
+    Save,
+    SaveAs,
+    SaveAll,
+    CloseTab,
+    NextTab,
+    PrevTab,
+    Find,
+    Replace,
+    FindNext,
+    FindPrev,
+    GotoLine,
+    GotoFile,
+    Palette,
+    ToggleSidebar,
+    ToggleMinimap,
+    WordWrap,
+    Bigger,
+    Smaller,
+    Quit,
 }
 
 /// (command, id, label, default shortcuts in craft-keymap's text form). `Cmd` is ⌘ on macOS and
@@ -736,19 +970,11 @@ const CMDS: &[(Cmd, &str, &str, &[&str])] = &[
 /// Default shortcuts on Windows and Linux where they differ from `CMDS`, by command id. There
 /// Ctrl+G is Go to Line, so Find Next and Previous take F3 and Shift+F3, and Replace adds Ctrl+H
 /// (on macOS ⌘H hides the app).
-const NOT_MAC: &[(&str, &[&str])] = &[
-    ("find.replace", &["Cmd+Alt+F", "Cmd+H"]),
-    ("find.next", &["F3"]),
-    ("find.prev", &["Shift+F3"]),
-];
+const NOT_MAC: &[(&str, &[&str])] = &[("find.replace", &["Cmd+Alt+F", "Cmd+H"]), ("find.next", &["F3"]), ("find.prev", &["Shift+F3"])];
 
 /// The menus, as rows of `CMDS`.
-const MENUS: [(&str, &[usize]); 4] = [
-    ("File", &[0, 1, 2, 3, 4, 5, 6, 21]),
-    ("Edit", &[9, 10, 11, 12]),
-    ("Goto", &[15, 14, 13, 7, 8]),
-    ("View", &[16, 17, 18, 19, 20]),
-];
+const MENUS: [(&str, &[usize]); 4] =
+    [("File", &[0, 1, 2, 3, 4, 5, 6, 21]), ("Edit", &[9, 10, 11, 12]), ("Goto", &[15, 14, 13, 7, 8]), ("View", &[16, 17, 18, 19, 20])];
 
 /// A command's label in a menu: without the palette's "File: " prefix.
 fn menu_label(label: &str) -> &str {
@@ -935,7 +1161,8 @@ impl eframe::App for Editor {
         self.dialogs.show_pending(Some(frame));
 
         // Save view changes half a second after the last one, however they were made.
-        let view = ViewPrefs { show_sidebar: self.show_sidebar, show_minimap: self.show_minimap, font_size: self.font_size, word_wrap: self.word_wrap };
+        let view =
+            ViewPrefs { show_sidebar: self.show_sidebar, show_minimap: self.show_minimap, font_size: self.font_size, word_wrap: self.word_wrap };
         self.settings.update(|p| p.view = view);
         let tick = self.settings.tick(std::time::Instant::now());
         if let SaveStatus::Failed(e) = &tick.status {
@@ -961,7 +1188,8 @@ impl Editor {
         egui::Panel::top("menu").frame(egui::Frame::NONE.fill(BG_TABBAR).inner_margin(egui::Margin::symmetric(8, 3))).show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 if self.logo_tex.is_none() {
-                    self.logo_tex = logo_rgba(64).map(|px| ctx.load_texture("logo", egui::ColorImage::from_rgba_unmultiplied([64, 64], &px), Default::default()));
+                    self.logo_tex =
+                        logo_rgba(64).map(|px| ctx.load_texture("logo", egui::ColorImage::from_rgba_unmultiplied([64, 64], &px), Default::default()));
                 }
                 if let Some(tex) = &self.logo_tex {
                     ui.add(egui::Image::new((tex.id(), Vec2::splat(18.0))));
@@ -998,9 +1226,10 @@ impl Editor {
         egui::Panel::bottom("status").frame(egui::Frame::NONE.fill(BG_TABBAR).inner_margin(egui::Margin::symmetric(10, 4))).show(ui, |ui| {
             ui.horizontal(|ui| {
                 let small = |s: String| RichText::new(s).size(12.0).color(FG_DIM);
-                let toggle = IconButton::new(tl!("Side bar"), Vec2::splat(18.0), &PLAIN_ICON).selected(self.show_sidebar).show(ui, |ui, rect, tint| {
-                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon(Icon::PanelLeft), FontId::proportional(12.0), tint);
-                });
+                let toggle =
+                    IconButton::new(tl!("Side bar"), Vec2::splat(18.0), &PLAIN_ICON).selected(self.show_sidebar).show(ui, |ui, rect, tint| {
+                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon(Icon::PanelLeft), FontId::proportional(12.0), tint);
+                    });
                 if toggle.on_hover_text(tl!("Toggle side bar")).clicked() {
                     self.show_sidebar = !self.show_sidebar;
                 }
@@ -1032,11 +1261,17 @@ impl Editor {
                     self.find_step(!back);
                     r.request_focus();
                 }
-                if ui.button(format!("{} {}", icon(Icon::ArrowDown), tl!("Find"))).clicked() { self.find_step(true); }
-                if ui.button(format!("{} {}", icon(Icon::ArrowUp), tl!("Previous"))).clicked() { self.find_step(false); }
+                if ui.button(format!("{} {}", icon(Icon::ArrowDown), tl!("Find"))).clicked() {
+                    self.find_step(true);
+                }
+                if ui.button(format!("{} {}", icon(Icon::ArrowUp), tl!("Previous"))).clicked() {
+                    self.find_step(false);
+                }
                 ui.label(RichText::new(if self.find_text.is_empty() { String::new() } else { trn!(n, "{n} match", "{n} matches") }).color(FG_DIM));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icon_button(ui, &framed_icon(ui), tl!("Close find bar"), Icon::X, 14.0).on_hover_text(tl!("Close")).clicked() { self.find_open = false; }
+                    if icon_button(ui, &framed_icon(ui), tl!("Close find bar"), Icon::X, 14.0).on_hover_text(tl!("Close")).clicked() {
+                        self.find_open = false;
+                    }
                     ui.toggle_value(&mut self.replace_open, icon(Icon::Replace)).on_hover_text(tl!("Show replace"));
                 });
             });
@@ -1044,8 +1279,12 @@ impl Editor {
                 ui.horizontal(|ui| {
                     ui.add_space(30.0);
                     ui.add(egui::TextEdit::singleline(&mut self.replace_text).hint_text(tl!("Replace")).desired_width(320.0));
-                    if ui.button(format!("{} {}", icon(Icon::Replace), tl!("Replace"))).clicked() { self.replace_one(); }
-                    if ui.button(format!("{} {}", icon(Icon::ReplaceAll), tl!("Replace All"))).clicked() { self.replace_all(); }
+                    if ui.button(format!("{} {}", icon(Icon::Replace), tl!("Replace"))).clicked() {
+                        self.replace_one();
+                    }
+                    if ui.button(format!("{} {}", icon(Icon::ReplaceAll), tl!("Replace All"))).clicked() {
+                        self.replace_all();
+                    }
                 });
             }
         });
@@ -1055,33 +1294,42 @@ impl Editor {
         let mut open: Option<PathBuf> = None;
         let mut switch_to = None;
         let mut close = None;
-        egui::Panel::left("side").default_size(220.0).frame(egui::Frame::NONE.fill(BG_SIDE).inner_margin(egui::Margin::symmetric(8, 8))).show(ui, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.label(RichText::new(tl!("OPEN FILES")).size(11.0).color(FG_DIM).strong());
-                for (i, d) in self.docs.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        let mark = if d.dirty() { icon(Icon::Circle) } else { icon(Icon::X) };
-                        if ui.add(egui::Button::new(RichText::new(mark).size(11.0).color(FG_DIM)).frame(false)).clicked() {
-                            close = Some(i);
-                        }
-                        let col = if i == self.active { FG } else { FG_DIM };
-                        if ui.add(egui::Label::new(RichText::new(d.title()).color(col)).sense(Sense::click())).clicked() {
-                            switch_to = Some(i);
-                        }
-                    });
-                }
-                if let Some(folder) = &self.folder {
-                    ui.add_space(10.0);
-                    ui.label(RichText::new(tl!("FOLDERS")).size(11.0).color(FG_DIM).strong());
-                    let name = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| folder.display().to_string());
-                    let active_path = self.docs[self.active].path.clone();
-                    dir_tree(ui, folder, &name, true, &active_path, &mut open);
-                }
-            });
-        });
-        if let Some(i) = switch_to { self.active = i; }
-        if let Some(i) = close { self.close_tab(i); }
-        if let Some(p) = open { self.open_path(p); }
+        egui::Panel::left("side").default_size(220.0).frame(egui::Frame::NONE.fill(BG_SIDE).inner_margin(egui::Margin::symmetric(8, 8))).show(
+            ui,
+            |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    ui.label(RichText::new(tl!("OPEN FILES")).size(11.0).color(FG_DIM).strong());
+                    for (i, d) in self.docs.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            let mark = if d.dirty() { icon(Icon::Circle) } else { icon(Icon::X) };
+                            if ui.add(egui::Button::new(RichText::new(mark).size(11.0).color(FG_DIM)).frame(false)).clicked() {
+                                close = Some(i);
+                            }
+                            let col = if i == self.active { FG } else { FG_DIM };
+                            if ui.add(egui::Label::new(RichText::new(d.title()).color(col)).sense(Sense::click())).clicked() {
+                                switch_to = Some(i);
+                            }
+                        });
+                    }
+                    if let Some(folder) = &self.folder {
+                        ui.add_space(10.0);
+                        ui.label(RichText::new(tl!("FOLDERS")).size(11.0).color(FG_DIM).strong());
+                        let name = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| folder.display().to_string());
+                        let active_path = self.docs[self.active].path.clone();
+                        dir_tree(ui, folder, &name, true, &active_path, &mut open);
+                    }
+                });
+            },
+        );
+        if let Some(i) = switch_to {
+            self.active = i;
+        }
+        if let Some(i) = close {
+            self.close_tab(i);
+        }
+        if let Some(p) = open {
+            self.open_path(p);
+        }
     }
 
     fn tab_bar(&mut self, ui: &mut egui::Ui) {
@@ -1095,23 +1343,28 @@ impl Editor {
                     for (i, d) in self.docs.iter().enumerate() {
                         let active = i == self.active;
                         let fill = if active { BG } else { BG_SIDE };
-                        let frame = egui::Frame::NONE.fill(fill).corner_radius(egui::CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }).inner_margin(egui::Margin::symmetric(12, 6));
+                        let frame = egui::Frame::NONE
+                            .fill(fill)
+                            .corner_radius(egui::CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 })
+                            .inner_margin(egui::Margin::symmetric(12, 6));
                         let r = frame.show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(icon(Icon::FileText)).size(12.0).color(if active { ACCENT } else { FG_DIM }));
                                 ui.label(RichText::new(d.title()).color(if active { FG } else { FG_DIM }));
-                                let (mark, label) = if d.dirty() { (Icon::Circle, tl!("Close tab, unsaved changes")) } else { (Icon::X, tl!("Close tab")) };
+                                let (mark, label) =
+                                    if d.dirty() { (Icon::Circle, tl!("Close tab, unsaved changes")) } else { (Icon::X, tl!("Close tab")) };
                                 if icon_button(ui, &PLAIN_ICON, label, mark, 11.0).on_hover_text(tl!("Close")).clicked() {
                                     close = Some(i);
                                 }
                             });
                         });
                         let title = d.title();
-                        let tab = craft_ui::tabs::Tab::new(ui.scope_id().with(("tab", i)), &title, active).show_at(ui, r.response.rect, |ui, resp| {
-                            if active {
-                                ui.painter().hline(resp.rect.x_range(), resp.rect.top(), Stroke::new(2.0, ACCENT));
-                            }
-                        });
+                        let tab =
+                            craft_ui::tabs::Tab::new(ui.scope_id().with(("tab", i)), &title, active).show_at(ui, r.response.rect, |ui, resp| {
+                                if active {
+                                    ui.painter().hline(resp.rect.x_range(), resp.rect.top(), Stroke::new(2.0, ACCENT));
+                                }
+                            });
                         if tab.clicked() {
                             switch_to = Some(i);
                         }
@@ -1122,8 +1375,12 @@ impl Editor {
                 });
             });
         });
-        if let Some(i) = switch_to { self.active = i; }
-        if let Some(i) = close { self.close_tab(i); }
+        if let Some(i) = switch_to {
+            self.active = i;
+        }
+        if let Some(i) = close {
+            self.close_tab(i);
+        }
     }
 
     fn editor_area(&mut self, ui: &mut egui::Ui) {
@@ -1167,13 +1424,22 @@ impl Editor {
                 // split a token where search matches start/end so they get a background
                 let mut cuts = vec![s, e];
                 for &(ms, me) in &matches {
-                    if ms > s && ms < e { cuts.push(ms); }
-                    if me > s && me < e { cuts.push(me); }
+                    if ms > s && ms < e {
+                        cuts.push(ms);
+                    }
+                    if me > s && me < e {
+                        cuts.push(me);
+                    }
                 }
                 cuts.sort_unstable();
                 for w in cuts.windows(2) {
                     let hit = matches.iter().any(|&(ms, me)| w[0] >= ms && w[1] <= me);
-                    let fmt = TextFormat { font_id: font_g.clone(), color: tok_color(t), background: if hit { C_MATCH } else { Color32::TRANSPARENT }, ..Default::default() };
+                    let fmt = TextFormat {
+                        font_id: font_g.clone(),
+                        color: tok_color(t),
+                        background: if hit { C_MATCH } else { Color32::TRANSPARENT },
+                        ..Default::default()
+                    };
                     job.append(&text[w[0]..w[1]], 0.0, fmt);
                 }
             }
@@ -1217,13 +1483,18 @@ impl Editor {
                         if new_line {
                             let col = if line_no == cur_line { FG } else { FG_DIM };
                             if line_no == cur_line {
-                                let r = Rect::from_min_size(Pos2::new(gutter_rect.min.x, y), Vec2::new(ui.clip_rect().max.x - gutter_rect.min.x, row.height()));
+                                let r = Rect::from_min_size(
+                                    Pos2::new(gutter_rect.min.x, y),
+                                    Vec2::new(ui.clip_rect().max.x - gutter_rect.min.x, row.height()),
+                                );
                                 painter.set(hl_slot, egui::Shape::rect_filled(r, 0.0, BG_LINE));
                             }
                             painter.text(Pos2::new(gutter_rect.max.x - 12.0, y), egui::Align2::RIGHT_TOP, line_no.to_string(), font.clone(), col);
                         }
                         new_line = row.ends_with_newline;
-                        if new_line { line_no += 1; }
+                        if new_line {
+                            line_no += 1;
+                        }
                     }
                 });
             })
@@ -1276,7 +1547,10 @@ impl Editor {
                     }
                 }
                 col += word.chars().count();
-                if seg.ends_with('\n') { line += 1; col = 0; }
+                if seg.ends_with('\n') {
+                    line += 1;
+                    col = 0;
+                }
             }
         }
         // visible-area box
@@ -1297,11 +1571,21 @@ impl Editor {
 
     fn palette(&mut self, ctx: &egui::Context) {
         // items: (label, detail, action)
-        enum Act { Cmd(Cmd), File(PathBuf), Line(usize) }
+        enum Act {
+            Cmd(Cmd),
+            File(PathBuf),
+            Line(usize),
+        }
         let q = self.palette_query.clone();
         let mut items: Vec<(String, String, Act)> = vec![];
         if let Some(rest) = q.strip_prefix('>') {
-            let mut scored: Vec<_> = CMDS.iter().filter_map(|&(c, id, l, _)| { let l = tid!(id, l); fuzzy(l, rest.trim()).map(|s| (s, c, id, l)) }).collect();
+            let mut scored: Vec<_> = CMDS
+                .iter()
+                .filter_map(|&(c, id, l, _)| {
+                    let l = tid!(id, l);
+                    fuzzy(l, rest.trim()).map(|s| (s, c, id, l))
+                })
+                .collect();
             scored.sort_by_key(|x| x.0);
             items = scored.into_iter().map(|(_, c, id, l)| (l.to_string(), self.shortcut_text(id), Act::Cmd(c))).collect();
         } else if let Some(rest) = q.strip_prefix(':') {
@@ -1314,52 +1598,84 @@ impl Editor {
             }
         } else {
             let root = self.folder.clone().unwrap_or_default();
-            let mut scored: Vec<_> = self.file_index.iter().filter_map(|p| {
-                let rel = p.strip_prefix(&root).unwrap_or(p).to_string_lossy().into_owned();
-                fuzzy(&rel, q.trim()).map(|s| (s, rel, p.clone()))
-            }).collect();
+            let mut scored: Vec<_> = self
+                .file_index
+                .iter()
+                .filter_map(|p| {
+                    let rel = p.strip_prefix(&root).unwrap_or(p).to_string_lossy().into_owned();
+                    fuzzy(&rel, q.trim()).map(|s| (s, rel, p.clone()))
+                })
+                .collect();
             scored.sort_by_key(|x| x.0);
-            items = scored.into_iter().take(200).map(|(_, rel, p)| {
-                let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                (name, rel, Act::File(p))
-            }).collect();
+            items = scored
+                .into_iter()
+                .take(200)
+                .map(|(_, rel, p)| {
+                    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    (name, rel, Act::File(p))
+                })
+                .collect();
             if self.folder.is_none() {
                 items.push((tl!("Open a folder to search its files").into(), String::new(), Act::Cmd(Cmd::OpenFolder)));
             }
         }
         self.palette_sel = self.palette_sel.min(items.len().saturating_sub(1));
-        if ctx.input(|i| i.key_pressed(Key::ArrowDown)) { self.palette_sel = (self.palette_sel + 1).min(items.len().saturating_sub(1)); }
-        if ctx.input(|i| i.key_pressed(Key::ArrowUp)) { self.palette_sel = self.palette_sel.saturating_sub(1); }
+        if ctx.input(|i| i.key_pressed(Key::ArrowDown)) {
+            self.palette_sel = (self.palette_sel + 1).min(items.len().saturating_sub(1));
+        }
+        if ctx.input(|i| i.key_pressed(Key::ArrowUp)) {
+            self.palette_sel = self.palette_sel.saturating_sub(1);
+        }
 
         let mut run: Option<usize> = None;
         let screen = ctx.content_rect();
-        egui::Area::new(egui::Id::unique("palette")).order(egui::Order::Foreground).fixed_pos(Pos2::new(screen.center().x - 260.0, screen.top() + 60.0)).show(ctx, |ui| {
-            egui::Frame::popup(ui.style()).fill(BG_SIDE).inner_margin(8).show(ui, |ui| {
-                ui.set_width(520.0);
-                let r = ui.add(egui::TextEdit::singleline(&mut self.palette_query).hint_text(tl!("Search files, > for commands, : for line")).desired_width(f32::INFINITY));
-                r.request_focus();
-                if r.changed() { self.palette_sel = 0; }
-                if ui.input(|i| i.key_pressed(Key::Enter)) && !items.is_empty() { run = Some(self.palette_sel); }
-                ui.add_space(4.0);
-                egui::ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
-                    for (i, (label, detail, _)) in items.iter().enumerate() {
-                        let sel = i == self.palette_sel;
-                        let fr = egui::Frame::NONE.fill(if sel { BG_LINE } else { Color32::TRANSPARENT }).inner_margin(egui::Margin::symmetric(8, 4)).corner_radius(4);
-                        let resp = fr.show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(label).color(if sel { ACCENT } else { FG }));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(detail).size(11.0).color(FG_DIM));
-                                });
-                            });
-                        }).response;
-                        if sel { resp.scroll_to_me(None); }
-                        if ui.interact(resp.rect, ui.scope_id().with(("pi", i)), Sense::click()).clicked() { run = Some(i); }
+        egui::Area::new(egui::Id::unique("palette"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(Pos2::new(screen.center().x - 260.0, screen.top() + 60.0))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).fill(BG_SIDE).inner_margin(8).show(ui, |ui| {
+                    ui.set_width(520.0);
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut self.palette_query)
+                            .hint_text(tl!("Search files, > for commands, : for line"))
+                            .desired_width(f32::INFINITY),
+                    );
+                    r.request_focus();
+                    if r.changed() {
+                        self.palette_sel = 0;
                     }
+                    if ui.input(|i| i.key_pressed(Key::Enter)) && !items.is_empty() {
+                        run = Some(self.palette_sel);
+                    }
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
+                        for (i, (label, detail, _)) in items.iter().enumerate() {
+                            let sel = i == self.palette_sel;
+                            let fr = egui::Frame::NONE
+                                .fill(if sel { BG_LINE } else { Color32::TRANSPARENT })
+                                .inner_margin(egui::Margin::symmetric(8, 4))
+                                .corner_radius(4);
+                            let resp = fr
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(label).color(if sel { ACCENT } else { FG }));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.label(RichText::new(detail).size(11.0).color(FG_DIM));
+                                        });
+                                    });
+                                })
+                                .response;
+                            if sel {
+                                resp.scroll_to_me(None);
+                            }
+                            if ui.interact(resp.rect, ui.scope_id().with(("pi", i)), Sense::click()).clicked() {
+                                run = Some(i);
+                            }
+                        }
+                    });
                 });
             });
-        });
         if let Some(i) = run {
             let act = items.swap_remove(i).2;
             self.overlay = Overlay::None;
@@ -1374,10 +1690,9 @@ impl Editor {
 }
 
 fn dir_tree(ui: &mut egui::Ui, dir: &Path, name: &str, open_default: bool, active: &Option<PathBuf>, open: &mut Option<PathBuf>) {
-    egui::CollapsingHeader::new(RichText::new(format!("{} {}", icon(Icon::Folder), name)).color(FG))
-        .id_salt(dir)
-        .default_open(open_default)
-        .show(ui, |ui| {
+    egui::CollapsingHeader::new(RichText::new(format!("{} {}", icon(Icon::Folder), name)).color(FG)).id_salt(dir).default_open(open_default).show(
+        ui,
+        |ui| {
             let Ok(rd) = std::fs::read_dir(dir) else { return };
             let mut entries: Vec<_> = rd.flatten().filter(|e| !e.file_name().to_string_lossy().starts_with('.')).collect();
             entries.sort_by_key(|e| (!e.path().is_dir(), e.file_name().to_ascii_lowercase()));
@@ -1395,7 +1710,8 @@ fn dir_tree(ui: &mut egui::Ui, dir: &Path, name: &str, open_default: bool, activ
                     }
                 }
             }
-        });
+        },
+    );
 }
 
 fn setup_style(ctx: &egui::Context) {
@@ -1481,10 +1797,14 @@ fn main() -> eframe::Result {
         options.run_and_return = true;
     }
     options.viewport = viewport;
-    eframe::run_native("TextCraft", options, Box::new(move |cc| {
-        setup_style(&cc.egui_ctx);
-        Ok(Box::new(Editor::new(&cc.egui_ctx, shot, files)))
-    }))
+    eframe::run_native(
+        "TextCraft",
+        options,
+        Box::new(move |cc| {
+            setup_style(&cc.egui_ctx);
+            Ok(Box::new(Editor::new(&cc.egui_ctx, shot, files)))
+        }),
+    )
 }
 
 #[cfg(test)]
@@ -1622,7 +1942,11 @@ mod tests {
         // the real settings folder.
         let dir = std::env::temp_dir().join(format!("textcraft-settings-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("config.toml"), "schema_version = 1\n[view]\nword_wrap = true\n\n[[shortcuts]]\ncommand = \"file.save\"\nkeys = [\"F2\"]\n").unwrap();
+        std::fs::write(
+            dir.join("config.toml"),
+            "schema_version = 1\n[view]\nword_wrap = true\n\n[[shortcuts]]\ncommand = \"file.save\"\nkeys = [\"F2\"]\n",
+        )
+        .unwrap();
         let (store, report) = SettingsStore::<Prefs>::open_at(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(!report.has_problems(), "{report:?}");

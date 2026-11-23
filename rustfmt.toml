@@ -1,0 +1,3 @@
+# Same style as craft-libs and the other Craft apps: wide lines, compact small items.
+max_width = 150
+use_small_heuristics = "Max"
