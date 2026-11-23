@@ -234,6 +234,8 @@ fn fuzzy(hay: &str, needle: &str) -> Option<usize> {
 
 // ---------- documents ----------
 struct Doc {
+    /// Stays the same while tabs open and close, unlike the tab index.
+    id: u64,
     path: Option<PathBuf>,
     text: String,
     saved: String,
@@ -241,6 +243,11 @@ struct Doc {
 }
 
 impl Doc {
+    fn new(path: Option<PathBuf>, text: String, untitled_no: usize) -> Doc {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Doc { id, path, saved: text.clone(), text, untitled_no }
+    }
     fn title(&self) -> String {
         match &self.path {
             Some(p) => p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -259,12 +266,13 @@ impl Doc {
     }
 }
 
-/// What to do when a dialog answers.
+/// What to do when a dialog answers. Documents are named by `Doc::id`, since tabs can open and
+/// close while a dialog is up.
 enum Then {
     Open,
     OpenFolder,
-    SaveAs { idx: usize, then_close: bool },
-    ConfirmClose(usize),
+    SaveAs { doc: u64, then_close: bool },
+    ConfirmClose(u64),
     ConfirmQuit,
 }
 
@@ -426,14 +434,14 @@ impl Editor {
             }
         }
         if ed.docs.is_empty() {
-            ed.docs.push(Doc { path: None, text: SAMPLE.into(), saved: SAMPLE.into(), untitled_no: 0 });
+            ed.docs.push(Doc::new(None, SAMPLE.into(), 0));
             ed.untitled_counter = 1;
         }
         ed
     }
 
     fn new_file(&mut self) {
-        self.docs.push(Doc { path: None, text: String::new(), saved: String::new(), untitled_no: self.untitled_counter });
+        self.docs.push(Doc::new(None, String::new(), self.untitled_counter));
         self.untitled_counter += 1;
         self.active = self.docs.len() - 1;
     }
@@ -450,7 +458,7 @@ impl Editor {
                 if self.docs.len() == 1 && self.docs[0].path.is_none() && !self.docs[0].dirty() && self.docs[0].untitled_no != 0 && self.docs[0].text.is_empty() {
                     self.docs.clear();
                 }
-                self.docs.push(Doc { path: Some(p), saved: text.clone(), text, untitled_no: 0 });
+                self.docs.push(Doc::new(Some(p), text, 0));
                 self.active = self.docs.len() - 1;
             }
             Err(e) => self.status = craft_i18n::fmt(I18N.tc(CURRENT.get(), "@msg", "Couldn't open {name}: {e}"), &[("name", &craft_i18n::ltr(&p.display().to_string())), ("e", &e.to_string())]),
@@ -462,7 +470,7 @@ impl Editor {
     fn save(&mut self, idx: usize, save_as: bool, then_close: bool) {
         match self.docs[idx].path.clone().filter(|_| !save_as) {
             Some(p) => self.write(idx, p, then_close),
-            None => self.dialogs.ask(FileDialog::save().file_name(self.docs[idx].title()), Then::SaveAs { idx, then_close }),
+            None => self.dialogs.ask(FileDialog::save().file_name(self.docs[idx].title()), Then::SaveAs { doc: self.docs[idx].id, then_close }),
         }
     }
 
@@ -489,7 +497,7 @@ impl Editor {
                 description: tf!("Save changes to {name} before closing?", name = self.docs[idx].title()),
                 buttons: MessageButtons::YesNoCancel,
             };
-            self.dialogs.ask_message(message, Then::ConfirmClose(idx));
+            self.dialogs.ask_message(message, Then::ConfirmClose(self.docs[idx].id));
         } else {
             self.remove_tab(idx);
         }
@@ -511,9 +519,7 @@ impl Editor {
             if matches!(then, Then::ConfirmQuit) {
                 self.asking_quit = false;
             }
-            // ponytail: a tab index can go stale if tabs close while a dialog is up; the
-            // bounds checks keep that from panicking. Give docs stable ids if it matters.
-            let live = |i: usize| i < self.docs.len();
+            let tab = |id: u64| self.docs.iter().position(|d| d.id == id);
             match (then, answer) {
                 (_, Answer::Unavailable(why)) => self.status = tf!("Could not show the dialog: {reason}", reason = why),
                 (Then::Open, Answer::Paths(paths)) => paths.into_iter().for_each(|p| self.open_path(p)),
@@ -524,13 +530,22 @@ impl Editor {
                         self.file_index.clear();
                     }
                 }
-                (Then::SaveAs { idx, then_close }, Answer::Paths(paths)) if live(idx) => {
-                    if let Some(p) = paths.into_iter().next() {
-                        self.write(idx, p, then_close);
+                (Then::SaveAs { doc, then_close }, Answer::Paths(paths)) => match (tab(doc), paths.into_iter().next()) {
+                    (Some(idx), Some(p)) => self.write(idx, p, then_close),
+                    (None, Some(_)) => self.status = tl!("Not saved: the file was closed before you chose where to save it").into(),
+                    _ => {}
+                },
+                // A document closed meanwhile needs nothing more.
+                (Then::ConfirmClose(doc), Answer::Message(MessageResult::Yes)) => {
+                    if let Some(idx) = tab(doc) {
+                        self.save(idx, false, true);
                     }
                 }
-                (Then::ConfirmClose(idx), Answer::Message(MessageResult::Yes)) if live(idx) => self.save(idx, false, true),
-                (Then::ConfirmClose(idx), Answer::Message(MessageResult::No)) if live(idx) => self.remove_tab(idx),
+                (Then::ConfirmClose(doc), Answer::Message(MessageResult::No)) => {
+                    if let Some(idx) = tab(doc) {
+                        self.remove_tab(idx);
+                    }
+                }
                 (Then::ConfirmQuit, Answer::Message(MessageResult::Yes)) => {
                     self.quit_confirmed = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1475,6 +1490,37 @@ mod tests {
         assert_eq!(toks[0].2, Tok::Keyword);
         assert!(toks.iter().any(|t| t.2 == Tok::Str));
         assert_eq!(toks.last().unwrap().2, Tok::Comment);
+    }
+
+    #[test]
+    fn dialog_answers_reach_their_document_after_tabs_close() {
+        let dir = std::env::temp_dir().join(format!("textcraft-dialog-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("saved.txt");
+        // A screenshot path keeps the settings in memory, away from the user's config.toml.
+        let mut ed = Editor::new(&egui::Context::default(), Some(dir.join("unused.png")), vec![]);
+        let answer = target.clone();
+        ed.dialogs.set_override(Some(Box::new(move |req| match req {
+            craft_dialogs::Request::File(_) => Answer::Paths(vec![answer.clone()]),
+            craft_dialogs::Request::Message(_) => Answer::Message(MessageResult::No),
+        })));
+        // Tabs: the clean sample, then two edited files.
+        for text in ["kept", "closed"] {
+            ed.new_file();
+            ed.docs[ed.active].text = text.into();
+        }
+        ed.save(1, true, false); // Save As for "kept"
+        ed.close_tab(2); // "closed" asks whether to save; the answer is No
+        ed.close_tab(0); // the clean sample closes at once, moving the others left
+        ed.dialogs.show_pending(None::<&eframe::Frame>);
+        ed.handle_dialogs(&egui::Context::default());
+
+        let written = std::fs::read_to_string(&target);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(written.ok().as_deref(), Some("kept"), "Save As wrote the document it was asked for");
+        let texts: Vec<&str> = ed.docs.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(texts, ["kept"], "the answered close prompt closed its own document");
+        assert!(!ed.docs[0].dirty());
     }
 
     #[test]
