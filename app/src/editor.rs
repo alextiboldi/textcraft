@@ -81,6 +81,8 @@ pub struct Editor {
     /// The document whose editor last took the keyboard; a different one shown takes it.
     editor_doc: Option<u64>,
     status: String,
+    /// The window title last sent; sending one asks for another frame, so it goes only on a change.
+    window_title: String,
     // screenshot mode
     shot: Option<PathBuf>,
     frame: u32,
@@ -128,8 +130,8 @@ fn main() {
 impl Editor {
     pub fn new(ctx: &egui::Context, shot: Option<PathBuf>, files: Vec<PathBuf>) -> Self {
         let wake_ctx = ctx.clone();
-        // Screenshots use defaults and never touch the user's config.toml, so they stay reproducible.
-        let (settings, report) = SettingsStore::<Prefs>::open(if shot.is_some() { Location::Memory } else { Location::Auto });
+        // Screenshots and tests use defaults and never touch the user's config.toml, so they stay reproducible.
+        let (settings, report) = SettingsStore::<Prefs>::open(if shot.is_some() || cfg!(test) { Location::Memory } else { Location::Auto });
         let view = settings.get().view.clone();
         let keymap = keymap(craft_keymap::egui::platform(ctx)).with_overrides(settings.get().shortcuts.clone());
         let mut problems = vec![];
@@ -179,6 +181,7 @@ impl Editor {
             pending_select: None,
             editor_doc: None,
             status: problems.join("; "),
+            window_title: String::new(),
             shot,
             frame: 0,
             capture: None,
@@ -539,12 +542,16 @@ impl eframe::App for Editor {
         }
         if self.overlay != Overlay::None && ctx.input(|i| i.key_pressed(Key::Escape)) {
             self.overlay = Overlay::None;
+            self.editor_doc = None; // the shown document's editor takes the keyboard back
         } else if self.find_open && ctx.input(|i| i.key_pressed(Key::Escape)) {
             self.find_open = false;
         }
 
         let title = format!("{}{} — TextCraft", title(&self.docs[self.active]), if self.docs[self.active].dirty() { " •" } else { "" });
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        if title != self.window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
 
         if self.native_menu.is_none() {
             self.menu_bar(ui, &ctx);

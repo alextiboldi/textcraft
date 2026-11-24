@@ -18,3 +18,7 @@ image = { version = "0.25", default-features = false, features = ["png", "webp"]
 winit = "0.30"
 lucide-icons = "1.78"
 textcraft-core = { path = "../core" }
+
+[dev-dependencies]
+# UI tests: drive the app by keyboard and read its AccessKit tree (accessibility.md).
+egui_kittest = { version = "0.37", features = ["eframe"] }
