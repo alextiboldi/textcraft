@@ -1,0 +1,9 @@
+# TextCraft's core: documents, file loading and saving, language detection, search and fuzzy
+# matching. No UI dependency, so a CLI or test can use it without egui.
+[package]
+name = "textcraft-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

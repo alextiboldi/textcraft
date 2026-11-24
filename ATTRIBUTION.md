@@ -7,8 +7,8 @@ are in `licenses/`.
 
 ## Assets
 
-- `app/assets/logo.webp`: the TextCraft logo, our own work, made by the project maintainer; no third-party source. The white outside its rounded square was made transparent (anti-aliased edge kept), re-encoded as WebP with alpha. Embedded in the app and used as its window and Dock icon (`logo_rgba` in `app/src/main.rs`). Under the repository licence.
-- `SAMPLE` in `app/src/main.rs` (the Rust snippet shown in the first, untitled tab): generated demo content, written for TextCraft when the app was first generated; no third-party source. Under the repository licence.
+- `app/assets/logo.webp`: the TextCraft logo, our own work, made by the project maintainer; no third-party source. The white outside its rounded square was made transparent (anti-aliased edge kept), re-encoded as WebP with alpha. Embedded in the app and used as its window and Dock icon (`logo_rgba` in `app/src/theme.rs`). Under the repository licence.
+- `SAMPLE` in `app/src/editor.rs` (the Rust snippet shown in the first, untitled tab): generated demo content, written for TextCraft when the app was first generated; no third-party source. Under the repository licence.
 
 ## Material embedded through dependencies
 

@@ -1,7 +1,7 @@
 # The workspace root: the release tooling (craft-common-actions cut_release.py) bumps
 # [workspace.package] version here, and Cargo reads [profile] and [patch] only at the root.
 [workspace]
-members = ["app"]
+members = ["app", "core"]
 resolver = "2"
 
 [workspace.package]

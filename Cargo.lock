@@ -3480,8 +3480,13 @@ dependencies = [
  "image",
  "lucide-icons",
  "serde",
+ "textcraft-core",
  "winit",
 ]
+
+[[package]]
+name = "textcraft-core"
+version = "0.1.0"
 
 [[package]]
 name = "thiserror"

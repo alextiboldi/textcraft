@@ -17,3 +17,4 @@ craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5e
 image = { version = "0.25", default-features = false, features = ["png", "webp"] }
 winit = "0.30"
 lucide-icons = "1.78"
+textcraft-core = { path = "../core" }
