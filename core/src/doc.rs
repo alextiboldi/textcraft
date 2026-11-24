@@ -1,6 +1,34 @@
 //! Open documents, and reading and writing their files.
 use crate::lang::{lang_for, Lang, PLAIN};
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+
+/// A line-end style. The editor holds text with LF line ends and writes the file's style back.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Eol {
+    #[default]
+    Lf,
+    Crlf,
+    Cr,
+}
+
+impl Eol {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Eol::Lf => "\n",
+            Eol::Crlf => "\r\n",
+            Eol::Cr => "\r",
+        }
+    }
+    /// The style's usual short name, as editors show it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Eol::Lf => "LF",
+            Eol::Crlf => "CRLF",
+            Eol::Cr => "CR",
+        }
+    }
+}
 
 pub struct Doc {
     /// Stays the same while tabs open and close, unlike the tab index.
@@ -9,13 +37,15 @@ pub struct Doc {
     pub text: String,
     pub saved: String,
     pub untitled_no: usize,
+    /// The line ends `save_to` writes; `text` itself always uses LF.
+    pub eol: Eol,
 }
 
 impl Doc {
     pub fn new(path: Option<PathBuf>, text: String, untitled_no: usize) -> Doc {
         static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Doc { id, path, saved: text.clone(), text, untitled_no }
+        Doc { id, path, saved: text.clone(), text, untitled_no, eol: Eol::Lf }
     }
     pub fn dirty(&self) -> bool {
         self.text != self.saved
@@ -34,16 +64,40 @@ impl Doc {
         self.save_with(&craft_atomic::RealFs, path)
     }
     fn save_with(&mut self, fs: &dyn craft_atomic::AtomicFs, path: PathBuf) -> std::io::Result<()> {
-        craft_atomic::atomic_write_custom(fs, craft_atomic::RenameRetry::platform(), &path, self.text.as_bytes())?;
+        let bytes = match self.eol {
+            Eol::Lf => Cow::Borrowed(&self.text),
+            eol => Cow::Owned(self.text.replace('\n', eol.as_str())),
+        };
+        craft_atomic::atomic_write_custom(fs, craft_atomic::RenameRetry::platform(), &path, bytes.as_bytes())?;
         self.saved = self.text.clone();
         self.path = Some(path);
         Ok(())
     }
 }
 
-/// A file's text, with invalid UTF-8 replaced and CRLF line ends made LF.
-pub fn read_text(path: &Path) -> std::io::Result<String> {
-    Ok(String::from_utf8_lossy(&std::fs::read(path)?).replace("\r\n", "\n"))
+/// A file's text, with invalid UTF-8 replaced and line ends made LF; see `split_eol`.
+pub fn read_text(path: &Path) -> std::io::Result<(String, Eol, bool)> {
+    Ok(split_eol(&String::from_utf8_lossy(&std::fs::read(path)?)))
+}
+
+/// `text` with every CRLF, CR and LF made LF, its most common line end (LF on a tie or when it
+/// has none), and whether it mixed styles.
+pub fn split_eol(text: &str) -> (String, Eol, bool) {
+    let (mut lf, mut crlf, mut cr) = (0usize, 0usize, 0usize);
+    let mut bytes = text.bytes().peekable();
+    while let Some(b) = bytes.next() {
+        match b {
+            b'\r' if bytes.next_if_eq(&b'\n').is_some() => crlf += 1,
+            b'\r' => cr += 1,
+            b'\n' => lf += 1,
+            _ => {}
+        }
+    }
+    // `max_by_key` keeps the last of equal counts, so ties go to LF.
+    let eol = [(cr, Eol::Cr), (crlf, Eol::Crlf), (lf, Eol::Lf)].into_iter().max_by_key(|&(n, _)| n).map_or(Eol::Lf, |(_, e)| e);
+    let mixed = [lf, crlf, cr].iter().filter(|&&n| n > 0).count() > 1;
+    let text = if cr + crlf == 0 { text.to_owned() } else { text.replace("\r\n", "\n").replace('\r', "\n") };
+    (text, eol, mixed)
 }
 
 #[cfg(test)]
@@ -52,6 +106,37 @@ mod tests {
     use craft_atomic::{AtomicFs, NewFilePermissions, RealFs};
     use std::fs::File;
     use std::io;
+
+    fn reopen_and_save(name: &str, bytes: &[u8]) -> (Vec<u8>, Eol, bool) {
+        let dir = std::env::temp_dir().join(format!("textcraft-eol-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let (text, eol, mixed) = read_text(&path).unwrap();
+        let mut doc = Doc::new(Some(path.clone()), text, 0);
+        doc.eol = eol;
+        doc.save_to(path.clone()).unwrap();
+        let out = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        (out, eol, mixed)
+    }
+
+    #[test]
+    fn unedited_files_save_the_bytes_that_were_read() {
+        for (name, bytes) in [("lf", &b"a\nb\n\nc"[..]), ("crlf", b"a\r\nb\r\n\r\nc"), ("cr", b"a\rb\r\rc")] {
+            let (out, _, mixed) = reopen_and_save(name, bytes);
+            assert_eq!(out, bytes, "{name}");
+            assert!(!mixed, "{name}");
+        }
+    }
+
+    #[test]
+    fn mixed_files_save_with_their_most_common_style() {
+        let (out, eol, mixed) = reopen_and_save("mixed", b"a\r\nb\r\nc\nd\re");
+        assert!(mixed);
+        assert_eq!(eol, Eol::Crlf);
+        assert_eq!(out, b"a\r\nb\r\nc\r\nd\r\ne");
+    }
 
     /// The real file system, except that flushing the staged text fails as on a full disk.
     struct FullDisk;
@@ -89,7 +174,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("notes.txt");
         std::fs::write(&path, "old text\n").unwrap();
-        let mut doc = Doc::new(Some(path.clone()), read_text(&path).unwrap(), 0);
+        let mut doc = Doc::new(Some(path.clone()), read_text(&path).unwrap().0, 0);
         doc.text.push_str("new text\n");
 
         assert!(doc.save_with(&FullDisk, path.clone()).is_err());

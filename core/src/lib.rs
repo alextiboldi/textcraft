@@ -4,7 +4,7 @@ mod doc;
 mod lang;
 mod search;
 
-pub use doc::{read_text, Doc};
+pub use doc::{read_text, split_eol, Doc, Eol};
 pub use lang::{lang_for, tokenize, Lang, Tok, PLAIN};
 pub use search::{byte_of_line, char_idx, find_all, fuzzy, index_folder};
 

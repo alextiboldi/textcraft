@@ -69,6 +69,7 @@ impl Editor {
                     ui.label(small(lang.to_string()));
                     ui.label(small(tf!("Spaces: {n}", n = num(4))));
                     ui.label(small("UTF-8".into()));
+                    ui.label(small(self.docs[self.active].eol.name().into()));
                 });
             });
         });
