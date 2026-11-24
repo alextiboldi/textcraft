@@ -273,6 +273,7 @@ impl Editor {
                     self.remove_tab(idx);
                 }
             }
+            // craft-atomic's error names the file, says why, and says whether the original was kept.
             Err(e) => self.status = tf!("Could not save: {error}", error = e),
         }
     }
