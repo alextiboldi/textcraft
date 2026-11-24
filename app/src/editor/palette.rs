@@ -79,6 +79,7 @@ impl Editor {
                             .hint_text(tl!("Search files, > for commands, : for line"))
                             .desired_width(f32::INFINITY),
                     );
+                    let r = r.accessible_name(tl!("Command Palette"));
                     r.request_focus();
                     if r.changed() {
                         self.palette_sel = 0;
@@ -118,6 +119,7 @@ impl Editor {
         if let Some(i) = run {
             let act = items.swap_remove(i).2;
             self.overlay = Overlay::None;
+            self.editor_doc = None; // the shown document's editor takes the keyboard back
             match act {
                 Act::Cmd(c) => self.run_command(ctx, c),
                 Act::File(p) => self.open_path(p),
@@ -125,5 +127,54 @@ impl Editor {
                 Act::Line(_) => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{By, NodeT, Queryable};
+    use egui_kittest::Harness;
+
+    /// The whole app, as its window runs it, on a Mac keyboard. Copy this for other UI tests.
+    fn harness() -> Harness<'static, Editor> {
+        let builder = Harness::builder().with_size([1200.0, 760.0]).with_os(egui::os::OperatingSystem::Mac);
+        // ponytail: the palette's ⌘ ⇧ ⌥ have no glyph in the installed fonts (#222); drop this when it is fixed.
+        let builder = builder.allow_missing_glyphs();
+        builder.build_eframe(|cc| {
+            crate::theme::setup_style(&cc.egui_ctx); // as main() does: the theme and the icon font
+            Editor::new(&cc.egui_ctx, None, vec![])
+        })
+    }
+
+    /// The role, name and value of the node that has the keyboard.
+    #[track_caller]
+    fn focused(h: &Harness<'_, Editor>) -> (Role, String, String) {
+        let node = h.get(By::new().predicate(|n| n.is_focused())).accesskit_node();
+        (node.role(), node.label().unwrap_or_default(), node.value().unwrap_or_default())
+    }
+
+    #[test]
+    fn the_palette_runs_a_command_by_keyboard() {
+        let mut h = harness();
+        h.run();
+        assert_eq!(focused(&h).0, Role::MultilineTextInput, "the editor has the keyboard at start");
+        let editor = focused(&h).1;
+        assert!(editor.starts_with("Untitled"), "the editor is named after its tab: {editor:?}");
+
+        h.key_press_modifiers(egui::Modifiers::MAC_CMD | egui::Modifiers::SHIFT, Key::P); // ⇧⌘P
+        h.run();
+        assert_eq!(focused(&h), (Role::TextInput, "Command Palette".into(), ">".into()), "the palette's search field has the keyboard");
+
+        h.event(egui::Event::Text("word wrap".into()));
+        h.run();
+        assert_eq!(focused(&h), (Role::TextInput, "Command Palette".into(), ">word wrap".into()));
+
+        let wrap = h.state().word_wrap;
+        h.key_press(Key::Enter);
+        h.run();
+        assert_ne!(h.state().word_wrap, wrap, "Enter ran View: Toggle Word Wrap");
+        assert_eq!(focused(&h).1, editor, "the keyboard is back in the editor");
     }
 }

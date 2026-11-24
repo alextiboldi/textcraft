@@ -1,5 +1,5 @@
 //! The text area with its line numbers, and the minimap.
-use super::{editor_id, Editor};
+use super::{editor_id, title, Editor};
 use crate::theme::{tok_color, BG, BG_LINE, C_MATCH, FG, FG_DIM};
 use eframe::egui::{self, text::LayoutJob, Color32, FontId, Pos2, Rect, Sense, Stroke, TextFormat, Vec2};
 use egui::text::{CCursor, CCursorRange};
@@ -34,6 +34,8 @@ impl Editor {
             ui.ctx().memory_mut(|m| m.request_focus(edit_id));
         }
 
+        // Named after its tab, so a screen reader says which document the keyboard is in.
+        let name = title(&self.docs[self.active]);
         let doc = &mut self.docs[self.active];
         let line_count = doc.text.matches('\n').count() + 1;
         let cur_line = self.cursor_line;
@@ -96,6 +98,7 @@ impl Editor {
                         .layouter(&mut layouter)
                         .show(ui);
                     out_cursor = out.cursor_range;
+                    let _ = out.response.response.clone().accessible_name(name);
                     // line numbers + current line highlight, drawn row by row from the galley
                     let painter = ui.painter();
                     let mut line_no = 1;
