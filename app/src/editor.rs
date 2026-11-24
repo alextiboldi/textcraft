@@ -235,6 +235,7 @@ impl Editor {
         }
         match textcraft_core::read_text(&p) {
             Ok((text, eol, mixed)) => {
+                textcraft_core::remove_stale_stages(&p);
                 // Replace a pristine empty untitled tab instead of piling up tabs.
                 if self.docs.len() == 1
                     && self.docs[0].path.is_none()

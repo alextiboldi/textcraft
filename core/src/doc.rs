@@ -69,6 +69,7 @@ impl Doc {
             eol => Cow::Owned(self.text.replace('\n', eol.as_str())),
         };
         craft_atomic::atomic_write_custom(fs, craft_atomic::RenameRetry::platform(), &path, bytes.as_bytes())?;
+        remove_stale_stages(&path);
         self.saved = self.text.clone();
         self.path = Some(path);
         Ok(())
@@ -78,6 +79,39 @@ impl Doc {
 /// A file's text, with invalid UTF-8 replaced and line ends made LF; see `split_eol`.
 pub fn read_text(path: &Path) -> std::io::Result<(String, Eol, bool)> {
     Ok(split_eol(&String::from_utf8_lossy(&std::fs::read(path)?)))
+}
+
+/// Removes, as best it can, the save stages a crash left in `file`'s folder.
+///
+/// craft-atomic saves by writing `.<name>.<pid>-<n>.craft_tmp` beside the file (the link's target,
+/// for a symbolic link) and renaming it over; a crash, kill or power cut in between leaves it behind.
+/// A live save renames its stage within seconds, so any stage untouched for an hour is left over,
+/// whichever file or Craft app it was for. Errors are ignored: the save or open itself succeeded.
+// ponytail: copies craft-atomic's stage name format; it moves into craft-atomic in #224. Lists the
+// folder on each save and open, fine for ordinary folders; skip it above some entry count if a
+// folder of 100k files ever makes saving feel slow.
+pub fn remove_stale_stages(file: &Path) {
+    const STALE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+    let Some(dir) = std::fs::canonicalize(file).ok().and_then(|p| p.parent().map(Path::to_path_buf)) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        if !entry.file_name().to_str().is_some_and(is_stage_name) {
+            continue;
+        }
+        // `DirEntry::metadata` does not follow links, so a link named like a stage is kept.
+        let age = entry.metadata().ok().filter(|m| m.is_file()).and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok());
+        if age.is_some_and(|age| age > STALE) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Whether `name` is a craft-atomic save stage: `.`, a file name, `.`, digits, `-`, digits, `.craft_tmp`.
+pub fn is_stage_name(name: &str) -> bool {
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let Some(rest) = name.strip_prefix('.').and_then(|n| n.strip_suffix(".craft_tmp")) else { return false };
+    let Some((file, tail)) = rest.rsplit_once('.') else { return false };
+    !file.is_empty() && tail.split_once('-').is_some_and(|(pid, n)| digits(pid) && digits(n))
 }
 
 /// `text` with every CRLF, CR and LF made LF, its most common line end (LF on a tie or when it
@@ -185,6 +219,44 @@ mod tests {
         assert_eq!(doc.path.as_ref(), Some(&path));
         let left: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(left, ["notes.txt"], "the staged text is cleaned up and no new file appears");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn only_stale_save_stages_are_removed() {
+        let dir = std::env::temp_dir().join(format!("textcraft-stages-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, "text").unwrap();
+        let two_hours_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60);
+        for (name, old) in [
+            (".notes.txt.4242-0.craft_tmp", true),     // left by a crash: removed
+            (".other.md.17-3.craft_tmp", true),        // another file's, also left over: removed
+            (".notes.txt.4242-1.craft_tmp", false),    // a save in progress: kept
+            (".notes.txt.42x-0.craft_tmp", true),      // not a stage name: kept
+            (".notes.txt.craft_tmp", true),            // not a stage name: kept
+            ("notes.txt.4242-0.craft_tmp", true),      // not hidden, so not a stage: kept
+            (".notes.txt.4242-0.craft_tmp.bak", true), // not a stage name: kept
+        ] {
+            let f = File::create(dir.join(name)).unwrap();
+            if old {
+                f.set_modified(two_hours_ago).unwrap();
+            }
+        }
+
+        remove_stale_stages(&file);
+
+        let mut left: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        left.sort();
+        let kept = [
+            ".notes.txt.4242-0.craft_tmp.bak",
+            ".notes.txt.4242-1.craft_tmp",
+            ".notes.txt.42x-0.craft_tmp",
+            ".notes.txt.craft_tmp",
+            "notes.txt",
+            "notes.txt.4242-0.craft_tmp",
+        ];
+        assert_eq!(left, kept);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
