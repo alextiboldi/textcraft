@@ -690,14 +690,19 @@ mod tests {
     use egui_kittest::kittest::{By, NodeT, Queryable};
     use egui_kittest::Harness;
 
-    /// The whole app with `files` open, as `palette.rs`'s `harness()` builds it.
-    fn harness(files: Vec<PathBuf>, missing_glyphs: bool) -> Harness<'static, Editor> {
-        let mut builder = Harness::builder().with_size([1200.0, 760.0]).with_os(egui::os::OperatingSystem::Mac);
+    /// The whole app with `files` open, as its window runs it, on a Mac keyboard on every host.
+    /// Every UI test builds the app here.
+    pub(super) fn harness(files: Vec<PathBuf>, missing_glyphs: bool) -> Harness<'static, Editor> {
+        let mac = egui::os::OperatingSystem::Mac;
+        let mut builder = Harness::builder().with_size([1200.0, 760.0]).with_os(mac);
         if missing_glyphs {
             builder = builder.allow_missing_glyphs();
         }
         builder.build_eframe(move |cc| {
-            crate::theme::setup_style(&cc.egui_ctx);
+            // kittest applies `with_os` only after building the app, and `Editor::new` builds its
+            // shortcuts from the context's OS: set it first, or Linux and Windows get Ctrl chords.
+            cc.egui_ctx.set_os(mac);
+            crate::theme::setup_style(&cc.egui_ctx); // as main() does: the theme and the icon font
             Editor::new(&cc.egui_ctx, None, files)
         })
     }
