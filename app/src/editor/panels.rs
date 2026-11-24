@@ -61,7 +61,9 @@ impl Editor {
                 }
                 ui.label(small(tf!("Line {line}, Column {column}", line = num(self.cursor_line), column = num(self.cursor_col))));
                 if !self.status.is_empty() {
-                    ui.label(small(format!("·  {}", self.status)));
+                    // A polite live region, so screen readers announce each new message.
+                    let id = ui.label(small(format!("·  {}", self.status))).id;
+                    ui.ctx().accesskit_node_builder(id, |n| n.set_live(egui::accesskit::Live::Polite));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(small(lang.to_string()));
@@ -233,4 +235,33 @@ fn dir_tree(ui: &mut egui::Ui, dir: &Path, name: &str, open_default: bool, activ
             }
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::accesskit::{Live, Role};
+    use egui_kittest::kittest::{By, NodeT, Queryable};
+    use egui_kittest::Harness;
+
+    #[test]
+    fn a_failed_save_is_announced_in_the_status_bar() {
+        let builder = Harness::builder().with_size([1200.0, 760.0]).with_os(egui::os::OperatingSystem::Mac);
+        let mut h = builder.build_eframe(|cc| {
+            crate::theme::setup_style(&cc.egui_ctx);
+            Editor::new(&cc.egui_ctx, None, vec![])
+        });
+        let missing = std::env::temp_dir().join(format!("textcraft-no-such-folder-{}", std::process::id()));
+        h.state_mut().docs[0].path = Some(missing.join("notes.txt"));
+        h.state_mut().docs[0].text.push_str("an edit");
+        h.run();
+
+        h.key_press_modifiers(egui::Modifiers::MAC_CMD, Key::S);
+        h.run();
+
+        let status = h.get(By::new().role(Role::Label).predicate(|n| n.value().is_some_and(|v| v.contains("Could not save")))).accesskit_node();
+        assert!(status.value().unwrap_or_default().contains("notes.txt"), "the message names the file");
+        assert_eq!(status.live(), Live::Polite, "screen readers announce the message");
+        assert!(h.state().docs[0].dirty(), "the document is still unsaved");
+    }
 }

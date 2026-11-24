@@ -7,6 +7,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+craft-atomic = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5ea74abda83e541f34191e465163593" }
 
 [dev-dependencies]
 craft-testkit = { git = "https://github.com/storytold/craft-libs", rev = "15cd58bbb5ea74abda83e541f34191e465163593" }
