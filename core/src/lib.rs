@@ -1,10 +1,12 @@
-//! TextCraft's core, with no UI dependency: documents and their files, language detection and
+//! TextCraft's core, with no UI dependency: documents and their files and encodings, language detection and
 //! tokenizing, search helpers and fuzzy matching.
 mod doc;
+mod encoding;
 mod lang;
 mod search;
 
 pub use doc::{read_text, split_eol, Doc, Eol};
+pub use encoding::{decode, Decoded, Encoding, ReadOnly};
 pub use lang::{lang_for, tokenize, Lang, Tok, PLAIN};
 pub use search::{byte_of_line, char_idx, find_all, fuzzy, index_folder};
 

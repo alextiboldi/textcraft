@@ -1,4 +1,5 @@
 //! Open documents, and reading and writing their files.
+use crate::encoding::{decode, Decoded, Encoding, ReadOnly};
 use crate::lang::{lang_for, Lang, PLAIN};
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -39,13 +40,21 @@ pub struct Doc {
     pub untitled_no: usize,
     /// The line ends `save_to` writes; `text` itself always uses LF.
     pub eol: Eol,
+    /// The encoding `save_to` writes.
+    pub encoding: Encoding,
+    /// Set when the text can't be saved over its file; the editor doesn't let it be edited.
+    pub read_only: Option<ReadOnly>,
 }
 
 impl Doc {
     pub fn new(path: Option<PathBuf>, text: String, untitled_no: usize) -> Doc {
         static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Doc { id, path, saved: text.clone(), text, untitled_no, eol: Eol::Lf }
+        Doc { id, path, saved: text.clone(), text, untitled_no, eol: Eol::Lf, encoding: Encoding::UTF8, read_only: None }
+    }
+    /// The document for a file read with `read_text`.
+    pub fn opened(path: PathBuf, file: Decoded) -> Doc {
+        Doc { eol: file.eol, encoding: file.encoding, read_only: file.read_only, ..Doc::new(Some(path), file.text, 0) }
     }
     pub fn dirty(&self) -> bool {
         self.text != self.saved
@@ -60,24 +69,32 @@ impl Doc {
     /// Writes the text to `path`, which becomes the document's file, and marks it saved.
     /// craft-atomic stages the text beside the file and renames it over, so a failed save leaves
     /// the file's old bytes and the document unsaved. Symbolic links and permission bits are kept.
+    /// A read-only document, or text its encoding can't write (see `Encoding::unencodable`), is
+    /// refused before anything is written.
     pub fn save_to(&mut self, path: PathBuf) -> std::io::Result<()> {
         self.save_with(&craft_atomic::RealFs, path)
     }
     fn save_with(&mut self, fs: &dyn craft_atomic::AtomicFs, path: PathBuf) -> std::io::Result<()> {
-        let bytes = match self.eol {
+        if self.read_only.is_some() {
+            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "the document is read-only"));
+        }
+        let text = match self.eol {
             Eol::Lf => Cow::Borrowed(&self.text),
             eol => Cow::Owned(self.text.replace('\n', eol.as_str())),
         };
-        craft_atomic::atomic_write_custom(fs, craft_atomic::RenameRetry::platform(), &path, bytes.as_bytes())?;
+        let bytes = self.encoding.encode(&text).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{} can't represent some of the text", self.encoding.name()))
+        })?;
+        craft_atomic::atomic_write_custom(fs, craft_atomic::RenameRetry::platform(), &path, &bytes)?;
         self.saved = self.text.clone();
         self.path = Some(path);
         Ok(())
     }
 }
 
-/// A file's text, with invalid UTF-8 replaced and line ends made LF; see `split_eol`.
-pub fn read_text(path: &Path) -> std::io::Result<(String, Eol, bool)> {
-    Ok(split_eol(&String::from_utf8_lossy(&std::fs::read(path)?)))
+/// A file's text in its own encoding, with line ends made LF; see `decode` and `split_eol`.
+pub fn read_text(path: &Path) -> std::io::Result<Decoded> {
+    Ok(decode(&std::fs::read(path)?))
 }
 
 /// `text` with every CRLF, CR and LF made LF, its most common line end (LF on a tie or when it
@@ -112,10 +129,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(name);
         std::fs::write(&path, bytes).unwrap();
-        let (text, eol, mixed) = read_text(&path).unwrap();
-        let mut doc = Doc::new(Some(path.clone()), text, 0);
-        doc.eol = eol;
-        doc.save_to(path.clone()).unwrap();
+        let file = read_text(&path).unwrap();
+        let (eol, mixed) = (file.eol, file.mixed);
+        Doc::opened(path.clone(), file).save_to(path.clone()).unwrap();
         let out = std::fs::read(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
         (out, eol, mixed)
@@ -174,7 +190,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("notes.txt");
         std::fs::write(&path, "old text\n").unwrap();
-        let mut doc = Doc::new(Some(path.clone()), read_text(&path).unwrap().0, 0);
+        let mut doc = Doc::opened(path.clone(), read_text(&path).unwrap());
         doc.text.push_str("new text\n");
 
         assert!(doc.save_with(&FullDisk, path.clone()).is_err());

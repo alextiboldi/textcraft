@@ -14,7 +14,7 @@ use craft_ui::capture::CaptureSlot;
 use eframe::egui::{self, Key};
 use std::path::PathBuf;
 use std::sync::Arc;
-use textcraft_core::{byte_of_line, char_idx, find_all, Doc};
+use textcraft_core::{byte_of_line, char_idx, find_all, Doc, Encoding, ReadOnly};
 
 /// A document's name in tabs and the window title.
 fn title(d: &Doc) -> String {
@@ -30,13 +30,33 @@ fn title(d: &Doc) -> String {
     }
 }
 
+/// Why document `d` can't be edited or saved, as the notice above its text says it.
+fn read_only_notice(d: &Doc) -> Option<String> {
+    let name = craft_i18n::ltr(&title(d));
+    Some(match d.read_only? {
+        ReadOnly::Binary => tf!("{name} is a binary file, so it is open read-only.", name = name),
+        ReadOnly::Undecodable => {
+            tf!("{name} can't be read as {encoding} without changing its bytes, so it is open read-only.", name = name, encoding = d.encoding.name())
+        }
+    })
+}
+
 /// What to do when a dialog answers. Documents are named by `Doc::id`, since tabs can open and
 /// close while a dialog is up.
 enum Then {
     Open,
     OpenFolder,
-    SaveAs { doc: u64, then_close: bool },
+    SaveAs {
+        doc: u64,
+        then_close: bool,
+    },
     ConfirmClose(u64),
+    /// Write the document to `path` as UTF-8, since its own encoding can't hold all of it.
+    SaveUtf8 {
+        doc: u64,
+        path: PathBuf,
+        then_close: bool,
+    },
     ConfirmQuit,
 }
 
@@ -234,7 +254,7 @@ impl Editor {
             return;
         }
         match textcraft_core::read_text(&p) {
-            Ok((text, eol, mixed)) => {
+            Ok(file) => {
                 // Replace a pristine empty untitled tab instead of piling up tabs.
                 if self.docs.len() == 1
                     && self.docs[0].path.is_none()
@@ -244,15 +264,18 @@ impl Editor {
                 {
                     self.docs.clear();
                 }
-                if mixed {
+                if file.mixed {
                     self.status = tf!(
                         "{name} had mixed line endings; saving will use {style}",
                         name = craft_i18n::ltr(&p.file_name().unwrap_or_default().to_string_lossy()),
-                        style = eol.name()
+                        style = file.eol.name()
                     );
                 }
-                let mut doc = Doc::new(Some(p), text, 0);
-                doc.eol = eol;
+                let doc = Doc::opened(p, file);
+                // Announced here too, since the notice above the text isn't a live region.
+                if let Some(why) = read_only_notice(&doc) {
+                    self.status = why;
+                }
                 self.docs.push(doc);
                 self.active = self.docs.len() - 1;
             }
@@ -268,13 +291,49 @@ impl Editor {
     /// Saves doc `idx`. Untitled docs and Save As ask for a path first, so the write happens
     /// when the dialog answers (`handle_dialogs`).
     fn save(&mut self, idx: usize, save_as: bool, then_close: bool) {
+        if let Some(why) = read_only_notice(&self.docs[idx]) {
+            self.status = why;
+            return;
+        }
         match self.docs[idx].path.clone().filter(|_| !save_as) {
             Some(p) => self.write(idx, p, then_close),
             None => self.dialogs.ask(FileDialog::save().file_name(title(&self.docs[idx])), Then::SaveAs { doc: self.docs[idx].id, then_close }),
         }
     }
 
+    /// Writes doc `idx` to `path`, first asking to save as UTF-8 instead when its encoding can't
+    /// represent all of its text.
     fn write(&mut self, idx: usize, path: PathBuf, then_close: bool) {
+        let doc = &self.docs[idx];
+        let unencodable = doc.encoding.unencodable(&doc.text, 5);
+        if !unencodable.is_empty() {
+            let places: Vec<String> = unencodable
+                .into_iter()
+                .map(|(at, c)| {
+                    let line_start = doc.text[..at].rfind('\n').map_or(0, |i| i + 1);
+                    tf!(
+                        "Line {line}, column {column}: “{char}” (U+{code})",
+                        line = crate::i18n::num(doc.text[..at].matches('\n').count() + 1),
+                        column = crate::i18n::num(doc.text[line_start..at].chars().count() + 1),
+                        char = c,
+                        code = format!("{:04X}", c as u32)
+                    )
+                })
+                .collect();
+            let message = Message {
+                level: MessageLevel::Warning,
+                title: tl!("Characters the encoding can't represent").into(),
+                description: tf!(
+                    "{encoding} has no bytes for some characters in {name}:\n{places}\n\nSave it as UTF-8 instead?",
+                    encoding = doc.encoding.name(),
+                    name = craft_i18n::ltr(&title(doc)),
+                    places = places.join("\n")
+                ),
+                buttons: MessageButtons::OkCancelCustom(tl!("Save as UTF-8").into(), tl!("Cancel").into()),
+            };
+            self.dialogs.ask_message(message, Then::SaveUtf8 { doc: doc.id, path, then_close });
+            return;
+        }
         match self.docs[idx].save_to(path) {
             Ok(()) => {
                 self.status = tl!("Saved").into();
@@ -344,6 +403,15 @@ impl Editor {
                         self.remove_tab(idx);
                     }
                 }
+                // rfd answers a custom button with its label, Cancel included.
+                (Then::SaveUtf8 { doc, path, then_close }, Answer::Message(r))
+                    if r == MessageResult::Ok || r == MessageResult::Custom(tl!("Save as UTF-8").into()) =>
+                {
+                    if let Some(idx) = tab(doc) {
+                        self.docs[idx].encoding = Encoding::UTF8;
+                        self.write(idx, path, then_close);
+                    }
+                }
                 (Then::ConfirmQuit, Answer::Message(MessageResult::Yes)) => {
                     self.quit_confirmed = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -389,6 +457,10 @@ impl Editor {
     }
 
     fn replace_one(&mut self) {
+        if let Some(why) = read_only_notice(&self.docs[self.active]) {
+            self.status = why;
+            return;
+        }
         // Replace the match at the current selection start, then move to the next.
         let (needle, rep, case) = (self.find_text.clone(), self.replace_text.clone(), self.find_case);
         let line = self.cursor_line;
@@ -405,6 +477,10 @@ impl Editor {
     }
 
     fn replace_all(&mut self) {
+        if let Some(why) = read_only_notice(&self.docs[self.active]) {
+            self.status = why;
+            return;
+        }
         let hits = find_all(&self.docs[self.active].text, &self.find_text, self.find_case);
         let rep = self.replace_text.clone();
         let text = &mut self.docs[self.active].text;
@@ -575,6 +651,7 @@ impl eframe::App for Editor {
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(BG)).show(ui, |ui| {
             self.tab_bar(ui);
+            self.read_only_bar(ui);
             self.editor_area(ui);
         });
         if self.overlay == Overlay::Palette {
@@ -608,6 +685,81 @@ impl eframe::App for Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{By, NodeT, Queryable};
+    use egui_kittest::Harness;
+
+    /// The whole app with `files` open, as `palette.rs`'s `harness()` builds it.
+    fn harness(files: Vec<PathBuf>, missing_glyphs: bool) -> Harness<'static, Editor> {
+        let mut builder = Harness::builder().with_size([1200.0, 760.0]).with_os(egui::os::OperatingSystem::Mac);
+        if missing_glyphs {
+            builder = builder.allow_missing_glyphs();
+        }
+        builder.build_eframe(move |cc| {
+            crate::theme::setup_style(&cc.egui_ctx);
+            Editor::new(&cc.egui_ctx, None, files)
+        })
+    }
+
+    fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("textcraft-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_file_that_cant_be_written_back_opens_read_only() {
+        let bytes = b"\xEF\xBB\xBFkeep me \xFF\n";
+        let path = temp_file("damaged.txt", bytes);
+        // The damaged byte shows as U+FFFD, which the editor font lacks.
+        let mut h = harness(vec![path.clone()], true);
+        h.run();
+        let editor = h.get(By::new().predicate(|n| n.is_focused())).accesskit_node();
+        assert_eq!(editor.role(), Role::MultilineTextInput, "the read-only text still takes the keyboard");
+        assert!(editor.is_read_only(), "and says it can't be edited");
+        let says_why = h.query_all(By::new().label_contains("so it is open read-only")).count();
+        assert_eq!(says_why, 2, "the notice above the text says why, and the status bar announces it");
+
+        h.event(egui::Event::Text("typed".into()));
+        h.key_press_modifiers(egui::Modifiers::MAC_CMD, Key::S);
+        h.run();
+        assert!(!h.state().docs[h.state().active].text.contains("typed"));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "the file isn't saved over");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn text_its_encoding_cant_hold_is_saved_as_utf8_only_when_asked() {
+        let path = temp_file("latin.txt", b"caf\xE9\n");
+        let mut h = harness(vec![path.clone()], false);
+        h.run();
+        assert_eq!(h.state().docs[h.state().active].encoding.name(), "windows-1252");
+        h.event(egui::Event::Text("Ω".into())); // Greek, which windows-1252 lacks
+        h.run();
+
+        let asked = Arc::new(std::sync::Mutex::new(String::new()));
+        let typed = h.state().docs[h.state().active].text.clone();
+        assert!(typed.contains('Ω'));
+        for (button, expected) in [("Cancel", &b"caf\xE9\n"[..]), ("Save as UTF-8", typed.as_bytes())] {
+            let seen = asked.clone();
+            h.state_mut().dialogs.set_override(Some(Box::new(move |req| match req {
+                craft_dialogs::Request::Message(m) => {
+                    *seen.lock().unwrap() = m.description.clone();
+                    Answer::Message(MessageResult::Custom(button.into()))
+                }
+                craft_dialogs::Request::File(_) => Answer::Cancelled,
+            })));
+            h.key_press_modifiers(egui::Modifiers::MAC_CMD, Key::S);
+            h.run();
+            let asked = asked.lock().unwrap();
+            assert!(asked.contains("Line ") && asked.contains("“Ω” (U+03A9)"), "the prompt shows where: {asked:?}");
+            assert_eq!(std::fs::read(&path).unwrap(), expected, "after {button}");
+        }
+        assert!(!h.state().docs[h.state().active].dirty());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
 
     #[test]
     fn the_shown_document_gets_the_keyboard() {

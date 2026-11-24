@@ -24,6 +24,9 @@ Unicode data (embedded through ICU4X's icu_normalizer_data, icu_properties_data 
   icu_locale_fallback_data 2.3.0, used by egui's link handling and craft-i18n, and craft-i18n's
   number and plural data generated from Unicode CLDR 48.2.1) — Unicode License v3,
   Copyright (c) 2020-2024 Unicode, Inc. See licenses/icu4x/LICENSE.
+Encoding tables (embedded through encoding_rs 0.8.44, from the WHATWG Encoding Standard's index
+  data) — BSD 3-Clause, Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
+  See licenses/encoding_rs/LICENSE-WHATWG.
 
 Interface translations, when built with CRAFT_I18N_DIR (embedded from storytold/craft-i18n
 locales/<code>/common.tsv and textcraft.tsv) — MIT OR Apache-2.0, Copyright (c) 2026 ArtCraft Team
