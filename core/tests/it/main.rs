@@ -1,6 +1,7 @@
 //! textcraft-core's integration tests: one binary per crate (AGENTS.md rule 30).
 use craft_testkit::hostile::{hammer, HammerConfig};
-use textcraft_core::{is_stage_name, lang_for, split_eol, tokenize};
+use std::path::PathBuf;
+use textcraft_core::{decode, is_stage_name, lang_for, read_text, split_eol, tokenize, Doc};
 
 /// Small sources in each language `lang_for` knows, written for this test. Together they reach
 /// every branch of the tokenizer: line and block comments, the three quote kinds with escapes,
@@ -59,6 +60,57 @@ fn the_stage_name_check_survives_damaged_names() {
             let name = String::from_utf8_lossy(bytes);
             if is_stage_name(&name) {
                 assert!(name.starts_with('.') && name.ends_with(".craft_tmp") && name.len() >= ".x.1-1.craft_tmp".len(), "{name:?}");
+            }
+        });
+    }
+}
+
+/// The files `fixtures/encodings/generate.sh` wrote, one per encoding, with their bytes.
+fn encoding_fixtures() -> Vec<(String, Vec<u8>)> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/encodings");
+    let mut files: Vec<_> =
+        std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "txt")).collect();
+    files.sort();
+    assert!(files.len() > 20, "the fixtures are missing from {}", dir.display());
+    files.into_iter().map(|p| (p.file_stem().unwrap().to_string_lossy().into_owned(), std::fs::read(&p).unwrap())).collect()
+}
+
+/// Opening and saving an unedited file in any of the encodings writes the bytes it was read from.
+/// Unicode and the multibyte encodings are also told apart; the single-byte ones can't always be
+/// (a DOS or Mac file reads as the Windows page it looks like), but still keep their bytes.
+#[test]
+fn every_encoding_saves_the_bytes_it_was_opened_with() {
+    let dir = std::env::temp_dir().join(format!("textcraft-encodings-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, bytes) in encoding_fixtures() {
+        let path = dir.join(&name);
+        std::fs::write(&path, &bytes).unwrap();
+        let file = read_text(&path).unwrap();
+        let encoding = file.encoding.name();
+        let label = name.trim_end_matches("-bom");
+        if let Some(expected) = encoding_rs::Encoding::for_label(label.as_bytes()).filter(|e| !e.is_single_byte()) {
+            assert_eq!(file.encoding.encoding, expected, "{name} was read as {encoding}");
+            assert_eq!(file.encoding.bom, name.ends_with("-bom"), "{name}");
+        }
+        assert_eq!(file.read_only, None, "{name} opened read-only as {encoding}");
+        assert!(!file.text.contains('\u{FFFD}'), "{name} read as {encoding} has replacement characters");
+        Doc::opened(path.clone(), file).save_to(path.clone()).unwrap();
+        assert!(std::fs::read(&path).unwrap() == bytes, "{name}, read as {encoding}, changed on saving");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Encoding detection and decoding, on damaged files in every encoding, never panic or hang, and
+/// whatever opens editable writes back exactly the bytes it was read from.
+#[test]
+fn encoding_detection_survives_damaged_files() {
+    for (name, seed) in encoding_fixtures() {
+        hammer(&HammerConfig::new(&name, 300), &seed, |bytes| {
+            let file = decode(bytes);
+            assert!(!file.text.contains('\r'));
+            if file.read_only.is_none() && !file.mixed {
+                let back = file.encoding.encode(&file.text.replace('\n', file.eol.as_str()));
+                assert!(back.as_deref() == Some(bytes), "{} doesn't write back the bytes it read", file.encoding.name());
             }
         });
     }

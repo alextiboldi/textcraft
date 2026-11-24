@@ -87,7 +87,15 @@ impl Editor {
                     let (gutter_rect, _) = ui.allocate_exact_size(Vec2::new(gutter_w, 0.0), Sense::hover());
                     // reserve a slot behind the text for the current-line highlight
                     let hl_slot = ui.painter().add(egui::Shape::Noop);
-                    let out = egui::TextEdit::multiline(&mut doc.text)
+                    // A read-only document's text is a `&str`: still focusable, selectable and copyable.
+                    let mut shown: &str;
+                    let text: &mut dyn egui::TextBuffer = if doc.read_only.is_some() {
+                        shown = &doc.text;
+                        &mut shown
+                    } else {
+                        &mut doc.text
+                    };
+                    let out = egui::TextEdit::multiline(text)
                         .id(edit_id)
                         .font(font.clone())
                         .code_editor()

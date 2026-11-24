@@ -1,5 +1,5 @@
 //! The menu bar, status bar, find bar, side bar and tab bar.
-use super::{title, Editor};
+use super::{read_only_notice, title, Editor};
 use crate::commands::{menu_label, CMDS, MENUS};
 use crate::i18n::num;
 use crate::theme::*;
@@ -68,7 +68,8 @@ impl Editor {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(small(lang.to_string()));
                     ui.label(small(tf!("Spaces: {n}", n = num(4))));
-                    ui.label(small("UTF-8".into()));
+                    let encoding = self.docs[self.active].encoding;
+                    ui.label(small(if encoding.bom { tf!("{encoding} with BOM", encoding = encoding.name()) } else { encoding.name().into() }));
                     ui.label(small(self.docs[self.active].eol.name().into()));
                 });
             });
@@ -159,6 +160,15 @@ impl Editor {
         if let Some(p) = open {
             self.open_path(p);
         }
+    }
+
+    /// Why the shown document is read-only, above its text, while it is.
+    pub(super) fn read_only_bar(&self, ui: &mut egui::Ui) {
+        let Some(why) = read_only_notice(&self.docs[self.active]) else { return };
+        egui::Frame::NONE.fill(BG_SIDE).inner_margin(egui::Margin::symmetric(12, 6)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(format!("{} {}", icon(Icon::Lock), why)).color(FG));
+        });
     }
 
     pub(super) fn tab_bar(&mut self, ui: &mut egui::Ui) {
