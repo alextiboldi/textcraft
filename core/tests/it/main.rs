@@ -1,6 +1,6 @@
 //! textcraft-core's integration tests: one binary per crate (AGENTS.md rule 30).
 use craft_testkit::hostile::{hammer, HammerConfig};
-use textcraft_core::{lang_for, split_eol, tokenize};
+use textcraft_core::{is_stage_name, lang_for, split_eol, tokenize};
 
 /// Small sources in each language `lang_for` knows, written for this test. Together they reach
 /// every branch of the tokenizer: line and block comments, the three quote kinds with escapes,
@@ -45,6 +45,20 @@ fn line_end_detection_survives_damaged_files() {
             assert!(!text.contains('\r'), "{name}: a CR is left in the text");
             if !mixed {
                 assert_eq!(text.replace('\n', eol.as_str()), read, "{name}: one style round-trips");
+            }
+        });
+    }
+}
+
+/// The stage-name check, on damaged folder entries, never panics or hangs, and never accepts a name
+/// outside the stage pattern's hidden `.craft_tmp` shape, since what it accepts may be deleted.
+#[test]
+fn the_stage_name_check_survives_damaged_names() {
+    for seed in [".notes.txt.4242-0.craft_tmp", ".a.b.c.1-2.craft_tmp", ".é.9-9.craft_tmp"] {
+        hammer(&HammerConfig::new(seed, 2_000), seed.as_bytes(), |bytes| {
+            let name = String::from_utf8_lossy(bytes);
+            if is_stage_name(&name) {
+                assert!(name.starts_with('.') && name.ends_with(".craft_tmp") && name.len() >= ".x.1-1.craft_tmp".len(), "{name:?}");
             }
         });
     }
