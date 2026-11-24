@@ -234,7 +234,7 @@ impl Editor {
             return;
         }
         match textcraft_core::read_text(&p) {
-            Ok(text) => {
+            Ok((text, eol, mixed)) => {
                 // Replace a pristine empty untitled tab instead of piling up tabs.
                 if self.docs.len() == 1
                     && self.docs[0].path.is_none()
@@ -244,7 +244,16 @@ impl Editor {
                 {
                     self.docs.clear();
                 }
-                self.docs.push(Doc::new(Some(p), text, 0));
+                if mixed {
+                    self.status = tf!(
+                        "{name} had mixed line endings; saving will use {style}",
+                        name = craft_i18n::ltr(&p.file_name().unwrap_or_default().to_string_lossy()),
+                        style = eol.name()
+                    );
+                }
+                let mut doc = Doc::new(Some(p), text, 0);
+                doc.eol = eol;
+                self.docs.push(doc);
                 self.active = self.docs.len() - 1;
             }
             Err(e) => {
