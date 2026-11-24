@@ -137,15 +137,9 @@ mod tests {
     use egui_kittest::kittest::{By, NodeT, Queryable};
     use egui_kittest::Harness;
 
-    /// The whole app, as its window runs it, on a Mac keyboard. Copy this for other UI tests.
     fn harness() -> Harness<'static, Editor> {
-        let builder = Harness::builder().with_size([1200.0, 760.0]).with_os(egui::os::OperatingSystem::Mac);
-        // ponytail: the palette's ⌘ ⇧ ⌥ have no glyph in the installed fonts (#222); drop this when it is fixed.
-        let builder = builder.allow_missing_glyphs();
-        builder.build_eframe(|cc| {
-            crate::theme::setup_style(&cc.egui_ctx); // as main() does: the theme and the icon font
-            Editor::new(&cc.egui_ctx, None, vec![])
-        })
+        // ponytail: the palette's ⌘ ⇧ ⌥ have no glyph in the installed fonts (#222); pass false when it is fixed.
+        crate::editor::tests::harness(vec![], true)
     }
 
     /// The role, name and value of the node that has the keyboard.

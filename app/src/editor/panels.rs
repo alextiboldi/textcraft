@@ -253,15 +253,10 @@ mod tests {
     use super::*;
     use egui::accesskit::{Live, Role};
     use egui_kittest::kittest::{By, NodeT, Queryable};
-    use egui_kittest::Harness;
 
     #[test]
     fn a_failed_save_is_announced_in_the_status_bar() {
-        let builder = Harness::builder().with_size([1200.0, 760.0]).with_os(egui::os::OperatingSystem::Mac);
-        let mut h = builder.build_eframe(|cc| {
-            crate::theme::setup_style(&cc.egui_ctx);
-            Editor::new(&cc.egui_ctx, None, vec![])
-        });
+        let mut h = crate::editor::tests::harness(vec![], false);
         let missing = std::env::temp_dir().join(format!("textcraft-no-such-folder-{}", std::process::id()));
         h.state_mut().docs[0].path = Some(missing.join("notes.txt"));
         h.state_mut().docs[0].text.push_str("an edit");
